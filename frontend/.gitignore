@@ -1,0 +1,68 @@
+# ── Secrets — never commit ────────────────────────────────────
+.env
+.env.*
+!.env.example
+backend/.env
+frontend/.env
+
+# ── Python ────────────────────────────────────────────────────
+__pycache__/
+*.py[cod]
+*$py.class
+*.pyc
+*.pyo
+.venv/
+venv/
+env/
+ENV/
+pip-log.txt
+*.egg-info/
+dist/
+build/
+*.egg
+.eggs/
+
+# ── Node / Frontend ───────────────────────────────────────────
+node_modules/
+frontend/dist/
+frontend/.vite/
+.npm
+*.tsbuildinfo
+
+# ── Cloud credentials ─────────────────────────────────────────
+*.p8
+*.pem
+*.key
+credentials
+.aws/
+
+# ── OS ────────────────────────────────────────────────────────
+.DS_Store
+.DS_Store?
+._*
+Thumbs.db
+desktop.ini
+
+# ── Editor ────────────────────────────────────────────────────
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+
+# ── Logs ──────────────────────────────────────────────────────
+*.log
+logs/
+npm-debug.log*
+yarn-debug.log*
+
+# ── Testing ───────────────────────────────────────────────────
+.coverage
+htmlcov/
+.pytest_cache/
+.mypy_cache/
+
+# ── Misc ──────────────────────────────────────────────────────
+*.bak
+*.tmp
+.cache/
