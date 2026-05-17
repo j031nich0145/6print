@@ -5,3 +5,4 @@ __pycache__/
 .venv/
 frontend/dist/
 .DS_Store.env
+.env
