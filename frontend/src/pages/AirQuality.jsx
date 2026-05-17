@@ -333,9 +333,14 @@ export default function AirQuality({ data, loading, filters, metricMeta, theme, 
 
   // ── Layer helpers (called after every style load) ──────────────────────────
   const applyBg = (map, color) => {
+    // 1. CSS on container + canvas so anything not covered by tiles matches theme
+    try { map.getContainer().style.background = color; } catch (_) {}
+    try { map.getCanvas().style.background = color; } catch (_) {}
+    // 2. Find the Mapbox background layer by TYPE (ID varies across styles)
     try {
-      if (map.getLayer("background"))
-        map.setPaintProperty("background", "background-color", color);
+      const layers = map.getStyle()?.layers ?? [];
+      const bgLayer = layers.find((l) => l.type === "background");
+      if (bgLayer) map.setPaintProperty(bgLayer.id, "background-color", color);
     } catch (_) {}
   };
 
@@ -408,6 +413,7 @@ export default function AirQuality({ data, loading, filters, metricMeta, theme, 
     map.addControl(new mapboxgl.ScaleControl({ unit: "metric" }), "bottom-right");
     map.addControl(new mapboxgl.AttributionControl({ compact: true }), "bottom-right");
     map.on("load", () => {
+      map.resize(); // ensure canvas fills container after CSS has applied
       applyBg(map, bgRef.current);
       addLayers(map, styleRef.current.includes("light"));
       setDots(map);
@@ -454,8 +460,11 @@ export default function AirQuality({ data, loading, filters, metricMeta, theme, 
 
   // ── Render ─────────────────────────────────────────────────────────────────
   return (
-    <div ref={containerRef} style={{ position: "absolute", inset: 0 }}>
+    <div ref={containerRef} style={{ position: "absolute", inset: 0, background: c.bg }}>
       <div ref={mapRef} style={{ position: "absolute", inset: 0 }} />
+      {/* Inset border to cover Mapbox edge artifacts with theme color */}
+      <div style={{ position:"absolute", inset:0, pointerEvents:"none", zIndex:1,
+        outline: `6px solid ${c.bg}`, outlineOffset: "-6px" }} />
 
       {viewMode === "charts" && (
         <ChartsView data={data} filters={filters} metricMeta={metricMeta} theme={theme} />
