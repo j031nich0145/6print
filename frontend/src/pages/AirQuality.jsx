@@ -479,8 +479,6 @@ export default function AirQuality({ data, loading, filters, metricMeta, theme, 
 
       {viewMode === "map" && (
         <>
-          <AQILegend theme={theme} />
-          <TopCities data={data} theme={theme} />
           {hover && !popup && <HoverTooltip info={hover} W={cSize.w} H={cSize.h} theme={theme} />}
           {popup && (
             <CityPopup city={popup.city} pos={popup} W={cSize.w}
