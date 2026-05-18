@@ -1,7 +1,14 @@
 import { useState, useEffect } from "react";
 import { useTheme } from "./theme/ThemeProvider";
 import { BUILT_IN_THEMES } from "./theme/themes";
-import { COLORMAP_DEFS, OCEAN_PRESETS } from "./utils/colormaps";
+import { COLORMAP_DEFS, OCEAN_PRESETS, resolveOceanColor } from "./utils/colormaps";
+
+// Thin wrapper for preview swatches (doesn't need bgRef etc.)
+const resolveOceanColorPreview = (preset, isLight) => {
+  if (!preset || preset === "auto") return isLight ? "#a0c0d8" : "#0d1b2a";
+  if (preset === "contrast")        return isLight ? "#04101e" : "#c8ddf0";
+  return preset;
+};
 import AirQuality from "./pages/AirQuality";
 import UVIndex from "./pages/UVIndex";
 import CarbonCalculator from "./pages/CarbonCalculator";
@@ -159,7 +166,7 @@ function SettingsModal({ open, onClose, theme,
   kpiState, onKpiToggle, onAlignCards,
   colormap, onColormap,
   oceanPreset, onOcean,
-  onSaveTemplate, onLoadTemplate }) {
+  onManageTemplates }) {
   const c = theme.colors, mono = theme.typography.fontFamilyMono;
   if (!open) return null;
 
@@ -270,12 +277,15 @@ function SettingsModal({ open, onClose, theme,
               Ocean Color
             </div>
             <div style={{ display:"grid", gridTemplateColumns:"repeat(3,1fr)", gap:8 }}>
-              {OCEAN_PRESETS.map(({ id, label, color }) => {
+              {OCEAN_PRESETS.map(({ id, label }) => {
                 const active = oceanPreset === id;
-                // Actual preview: contrast uses computed color based on current isLight
-                const previewColor = id === "contrast"
-                  ? (theme.meta.tags?.includes("light") ? "#0a1628" : "#c8ddf0")
-                  : (color ?? "#4a8fcf");   // auto shows mid-blue as hint
+                const isLt   = theme.meta.tags?.includes("light");
+                // Always show the actual color this preset produces
+                const previewColor = id === "auto"
+                  ? (isLt ? "#a0c0d8" : "#0d1b2a")
+                  : id === "contrast"
+                  ? (isLt ? "#04101e" : "#c8ddf0")
+                  : id; // direct hex
                 return (
                   <button key={id} onClick={()=>onOcean(id)} style={{
                     background: c.surface,
@@ -285,8 +295,7 @@ function SettingsModal({ open, onClose, theme,
                     boxShadow: active ? `0 0 0 2px ${c.accent}44` : "none",
                   }}>
                     <div style={{ height:10, borderRadius:4,
-                      background: previewColor,
-                      border: `1px solid ${c.border}` }} />
+                      background: previewColor, border:`1px solid ${c.border}` }} />
                     <div style={{ fontFamily:mono, fontSize:9,
                       fontWeight:active?700:500,
                       color: active ? c.accent : c.textMuted }}>
@@ -305,27 +314,226 @@ function SettingsModal({ open, onClose, theme,
 
         </div>
 
-        {/* Save/Load template — bottom of modal */}
+        {/* Template bar — bottom of settings modal */}
         <div style={{ padding:"10px 20px", borderTop:`1px solid ${c.border}`,
-          display:"flex", alignItems:"center", gap:10, flexShrink:0 }}>
+          display:"flex", alignItems:"center", gap:8, flexShrink:0 }}>
           <span style={{ fontFamily:mono, fontSize:10, color:c.textSubtle, letterSpacing:"0.08em" }}>
-            Template:
+            Templates:
           </span>
-          <button onClick={onSaveTemplate} style={{
-            padding:"5px 14px",
+          <button onClick={onManageTemplates} style={{
+            padding:"5px 16px",
             background:c.accentSubtle, border:`1px solid ${c.accent}`,
             borderRadius:theme.shape.buttonRadius,
             color:c.accent, fontFamily:mono, fontSize:10, cursor:"pointer",
-          }}>Save</button>
-          <button onClick={onLoadTemplate} style={{
-            padding:"5px 14px",
-            background:c.surface, border:`1px solid ${c.border}`,
-            borderRadius:theme.shape.buttonRadius,
-            color:c.textMuted, fontFamily:mono, fontSize:10, cursor:"pointer",
-          }}>Load</button>
-          <span style={{ fontFamily:mono, fontSize:9, color:c.textSubtle, marginLeft:4 }}>
-            Saves theme, colormap &amp; KPI layout
+          }}>Manage →</button>
+          <span style={{ fontFamily:mono, fontSize:9, color:c.textSubtle }}>
+            Save &amp; load full layouts
           </span>
+        </div>
+      </div>
+    </>
+  );
+}
+
+// ── Template manager modal ────────────────────────────────────────────────────
+function TemplateModal({ open, onClose, onLoad, currentState, theme }) {
+  const c = theme.colors, mono = theme.typography.fontFamilyMono;
+  const [templates, setTemplates] = useState({});
+  const [saveName,  setSaveName]  = useState("");
+  const [kabob,     setKabob]     = useState(null);  // key of open kabob menu
+  const [renaming,  setRenaming]  = useState(null);  // key being renamed
+  const [newName,   setNewName]   = useState("");
+
+  useEffect(() => {
+    if (open) reload();
+  }, [open]);
+
+  const reload = () =>
+    setTemplates(JSON.parse(localStorage.getItem(TEMPLATE_KEY) || "{}"));
+
+  const persist = (next) => {
+    localStorage.setItem(TEMPLATE_KEY, JSON.stringify(next));
+    setTemplates(next);
+  };
+
+  const handleSave = () => {
+    const name = saveName.trim();
+    if (!name) return;
+    persist({ ...templates, [name]: currentState });
+    setSaveName("");
+  };
+
+  const handleDelete = (key) => {
+    const next = { ...templates };
+    delete next[key];
+    persist(next);
+    setKabob(null);
+  };
+
+  const handleRenameConfirm = (oldKey) => {
+    const name = newName.trim();
+    if (!name || name === oldKey) { setRenaming(null); return; }
+    const next = { ...templates };
+    next[name] = next[oldKey];
+    delete next[oldKey];
+    persist(next);
+    setRenaming(null); setNewName("");
+  };
+
+  if (!open) return null;
+
+  const entries = Object.entries(templates);
+
+  return (
+    <>
+      <div onClick={()=>{onClose();setKabob(null);}} style={{
+        position:"fixed", inset:0, zIndex:1000,
+        background:"rgba(0,0,0,0.55)", backdropFilter:"blur(4px)",
+      }}/>
+      <div onClick={(e)=>e.stopPropagation()} style={{
+        position:"fixed", zIndex:1001,
+        top:"50%", left:"50%", transform:"translate(-50%,-50%)",
+        width:"min(680px,95vw)", maxHeight:"80vh",
+        background:c.panel, border:`1px solid ${c.border}`,
+        borderRadius:theme.shape.modalRadius,
+        boxShadow:"0 24px 64px rgba(0,0,0,0.7)",
+        display:"flex", flexDirection:"column", overflow:"hidden",
+      }}>
+        {/* Header */}
+        <div style={{ padding:"14px 20px", borderBottom:`1px solid ${c.border}`,
+          display:"flex", justifyContent:"space-between", alignItems:"center", flexShrink:0 }}>
+          <span style={{ fontFamily:mono, fontSize:11, letterSpacing:"0.18em",
+            textTransform:"uppercase", fontWeight:700, color:c.text }}>
+            Manage Templates
+          </span>
+          <button onClick={onClose} style={{
+            background:"none", border:"none", color:c.textMuted, fontSize:20, cursor:"pointer" }}>×</button>
+        </div>
+
+        {/* Save new */}
+        <div style={{ padding:"12px 20px", borderBottom:`1px solid ${c.border}`,
+          display:"flex", gap:8, alignItems:"center", flexShrink:0 }}>
+          <input value={saveName} onChange={(e)=>setSaveName(e.target.value)}
+            onKeyDown={(e)=>e.key==="Enter"&&handleSave()}
+            placeholder="New template name…"
+            style={{ flex:1, padding:"7px 12px",
+              background:c.inputBg??c.surface, border:`1px solid ${c.inputBorder??c.border}`,
+              borderRadius:theme.shape.inputRadius??6, color:c.text,
+              fontFamily:mono, fontSize:11, outline:"none" }}/>
+          <button onClick={handleSave} style={{
+            padding:"7px 18px", background:c.accentSubtle,
+            border:`1px solid ${c.accent}`, borderRadius:theme.shape.buttonRadius,
+            color:c.accent, fontFamily:mono, fontSize:10, cursor:"pointer",
+            opacity: saveName.trim() ? 1 : 0.4,
+          }}>Save Current</button>
+        </div>
+
+        {/* Grid of templates */}
+        <div style={{ overflowY:"auto", flex:1, padding:"16px 20px" }}>
+          {entries.length === 0 && (
+            <div style={{ fontFamily:mono, fontSize:11, color:c.textSubtle,
+              textAlign:"center", padding:"32px 0" }}>
+              No saved templates yet
+            </div>
+          )}
+          <div style={{ display:"grid", gridTemplateColumns:"repeat(auto-fill,minmax(180px,1fr))", gap:12 }}>
+            {entries.map(([key, tmpl]) => {
+              const savedTheme = BUILT_IN_THEMES.find(t=>t.meta.id===tmpl.themeId) ?? BUILT_IN_THEMES[0];
+              const cmStops   = COLORMAP_DEFS[tmpl.colormap ?? "aqi"]?.stops ?? [];
+              const oceanColor = resolveOceanColorPreview(tmpl.oceanPreset, savedTheme.meta.tags?.includes("light"));
+              const isKabob   = kabob === key;
+              return (
+                <div key={key} style={{ position:"relative", borderRadius:8, overflow:"visible" }}>
+                  {/* Tile */}
+                  <div onClick={()=>{onLoad(tmpl);onClose();}}
+                    style={{
+                      background: savedTheme.colors.bg,
+                      border: `2px solid ${savedTheme.colors.border}`,
+                      borderRadius:8, overflow:"hidden",
+                      cursor:"pointer", transition:"border-color 0.15s",
+                    }}
+                    onMouseEnter={(e)=>e.currentTarget.style.borderColor=savedTheme.colors.accent}
+                    onMouseLeave={(e)=>e.currentTarget.style.borderColor=savedTheme.colors.border}>
+                    {/* Theme accent bar */}
+                    <div style={{ height:5, background:savedTheme.colors.accent }} />
+                    {/* Colormap strip */}
+                    <div style={{ height:8, background:cmStops.length
+                      ? `linear-gradient(to right,${cmStops.join(",")})`
+                      : savedTheme.colors.surface }} />
+                    {/* Ocean + theme color swatch row */}
+                    <div style={{ display:"flex", gap:4, padding:"6px 8px",
+                      background:savedTheme.colors.surface }}>
+                      <div style={{ width:14, height:14, borderRadius:"50%",
+                        background:savedTheme.colors.accent }} />
+                      <div style={{ flex:1, height:14, borderRadius:3,
+                        background:oceanColor }} />
+                    </div>
+                    {/* Name */}
+                    {renaming === key ? (
+                      <div style={{ padding:"4px 8px 8px" }} onClick={(e)=>e.stopPropagation()}>
+                        <input autoFocus value={newName}
+                          onChange={(e)=>setNewName(e.target.value)}
+                          onKeyDown={(e)=>{
+                            if (e.key==="Enter") handleRenameConfirm(key);
+                            if (e.key==="Escape") { setRenaming(null); setNewName(""); }
+                          }}
+                          style={{ width:"100%", padding:"4px 6px",
+                            background:savedTheme.colors.bg,
+                            border:`1px solid ${savedTheme.colors.accent}`,
+                            borderRadius:4, color:savedTheme.colors.text,
+                            fontFamily:mono, fontSize:10, outline:"none",
+                            boxSizing:"border-box" }}/>
+                      </div>
+                    ) : (
+                      <div style={{ padding:"6px 8px 8px",
+                        fontFamily:mono, fontSize:10, fontWeight:600,
+                        color:savedTheme.colors.text,
+                        whiteSpace:"nowrap", overflow:"hidden", textOverflow:"ellipsis" }}>
+                        {key}
+                      </div>
+                    )}
+                  </div>
+
+                  {/* Kabob ⋮ button */}
+                  <button onClick={(e)=>{e.stopPropagation();setKabob(isKabob?null:key);}}
+                    style={{
+                      position:"absolute", top:4, right:4,
+                      background:`${c.panel}cc`, border:`1px solid ${c.border}`,
+                      borderRadius:4, color:c.textMuted, fontSize:14,
+                      cursor:"pointer", width:22, height:22,
+                      display:"flex", alignItems:"center", justifyContent:"center",
+                      lineHeight:1, zIndex:10,
+                    }}>⋮</button>
+
+                  {/* Kabob dropdown */}
+                  {isKabob && (
+                    <div onClick={(e)=>e.stopPropagation()} style={{
+                      position:"absolute", top:28, right:0, zIndex:200,
+                      background:c.panel, border:`1px solid ${c.border}`,
+                      borderRadius:6, boxShadow:"0 4px 16px rgba(0,0,0,0.4)",
+                      overflow:"hidden", minWidth:110,
+                    }}>
+                      {[
+                        { label:"Rename", action:()=>{ setRenaming(key); setNewName(key); setKabob(null); } },
+                        { label:"Delete", action:()=>handleDelete(key), danger:true },
+                      ].map(({label,action,danger})=>(
+                        <button key={label} onClick={action} style={{
+                          display:"block", width:"100%", padding:"8px 14px",
+                          background:"none", border:"none", textAlign:"left",
+                          fontFamily:mono, fontSize:10, letterSpacing:"0.08em",
+                          color: danger ? "#ef4444" : c.textMuted,
+                          cursor:"pointer",
+                        }}
+                        onMouseEnter={(e)=>e.currentTarget.style.background=c.surface}
+                        onMouseLeave={(e)=>e.currentTarget.style.background="none"}
+                        >{label}</button>
+                      ))}
+                    </div>
+                  )}
+                </div>
+              );
+            })}
+          </div>
         </div>
       </div>
     </>
@@ -486,6 +694,7 @@ export default function App() {
   const [activeTab,    setActiveTab]    = useState("aqi");
   const [filtersOpen,  setFiltersOpen]  = useState(false);
   const [settingsOpen, setSettingsOpen] = useState(false);
+  const [templateOpen, setTemplateOpen] = useState(false);
   const [filters,      setFilters]      = useState({ region:"All Regions", metric:"us_aqi", minPop:0 });
   const [viewMode,     setViewMode]     = useState("map");
   const [choropleth,   setChoropleth]   = useState("none");
@@ -536,18 +745,41 @@ export default function App() {
   const handleAlignCards = (edge) => {
     const visible = kpiState.filter((k) => k.visible);
     const W = window.innerWidth, H = window.innerHeight;
-    const PAD=12, CW=210, CH=180, ST=12;
+    const PAD = 12, CW = 210, CH = 190, GAP = 8;
+
     const newPositions = visible.map((k, idx) => {
       let x, y;
-      if (edge === "top")    { x = PAD + idx*(CW+ST); y = TAB_H+PAD; }
-      if (edge === "bottom") { x = PAD + idx*(CW+ST); y = H-CH-PAD; }
-      if (edge === "left")   { x = PAD; y = TAB_H+PAD + idx*(CH+ST); }
-      if (edge === "right")  { x = W-CW-PAD; y = TAB_H+PAD + idx*(CH+ST); }
-      return { id:k.id, x, y };
+
+      if (edge === "top" || edge === "bottom") {
+        // Horizontal layout — wrap to next row if cards would run off right edge
+        const perRow = Math.max(1, Math.floor((W - PAD * 2 + GAP) / (CW + GAP)));
+        const row = Math.floor(idx / perRow);
+        const col = idx % perRow;
+        x = PAD + col * (CW + GAP);
+        y = edge === "top"
+          ? TAB_H + PAD + row * (CH + GAP)
+          : H - PAD - CH - row * (CH + GAP);
+      } else {
+        // Vertical layout — wrap to next column if cards would run off bottom
+        const perCol = Math.max(1, Math.floor((H - TAB_H - PAD * 2 + GAP) / (CH + GAP)));
+        const col = Math.floor(idx / perCol);
+        const row = idx % perCol;
+        y = TAB_H + PAD + row * (CH + GAP);
+        x = edge === "left"
+          ? PAD + col * (CW + GAP)
+          : W - PAD - CW - col * (CW + GAP);
+      }
+
+      // Hard clamp — card must always be reachable
+      x = Math.max(0, Math.min(x, W - CW));
+      y = Math.max(TAB_H, Math.min(y, H - CH));
+
+      return { id: k.id, x, y };
     });
+
     setKpiState((prev) => prev.map((k) => {
-      const np = newPositions.find((p) => p.id===k.id);
-      return np ? {...k, x:np.x, y:np.y} : k;
+      const np = newPositions.find((p) => p.id === k.id);
+      return np ? { ...k, x: np.x, y: np.y } : k;
     }));
   };
 
@@ -655,8 +887,19 @@ export default function App() {
         onAlignCards={handleAlignCards}
         colormap={colormap} onColormap={setColormap}
         oceanPreset={oceanPreset} onOcean={setOceanPreset}
-        onSaveTemplate={handleSaveTemplate}
-        onLoadTemplate={handleLoadTemplate}/>
+        onManageTemplates={()=>{setSettingsOpen(false);setTemplateOpen(true);}}/>
+
+      <TemplateModal
+        open={templateOpen}
+        onClose={()=>setTemplateOpen(false)}
+        theme={theme}
+        currentState={{ themeId:theme.meta.id, colormap, oceanPreset, kpiState }}
+        onLoad={(tmpl)=>{
+          if (tmpl.themeId && switchTheme) switchTheme(tmpl.themeId);
+          if (tmpl.colormap)    setColormap(tmpl.colormap);
+          if (tmpl.oceanPreset) setOceanPreset(tmpl.oceanPreset);
+          if (tmpl.kpiState)    setKpiState(tmpl.kpiState);
+        }}/>
 
       <KpiCardsLayer kpiState={kpiState} data={aqiData}
         filters={filters} metricMeta={METRIC_META}

@@ -316,6 +316,7 @@ export default function AirQuality({ data, loading, filters, metricMeta, theme, 
   const colormapRef = useRef(colormap);
   const oceanRef    = useRef(oceanPreset);
   const isLightRef  = useRef(isLight);
+  const defaultWaterRef = useRef({});  // stores Mapbox's original water layer colors
 
   const [cSize,     setCSize]     = useState({ w: 1200, h: 700 });
   const [popup,     setPopup]     = useState(null);
@@ -347,39 +348,46 @@ export default function AirQuality({ data, loading, filters, metricMeta, theme, 
     } catch (_) {}
   };
 
+  // Capture Mapbox's original water layer colors once on load (for "Default" restoration)
+  const captureDefaultWater = (map) => {
+    defaultWaterRef.current = {};
+    try {
+      (map.getStyle()?.layers ?? []).forEach((layer) => {
+        if (layer.type === "fill" && /water/i.test(layer.id)) {
+          try {
+            const color = map.getPaintProperty(layer.id, "fill-color");
+            if (color) defaultWaterRef.current[layer.id] = color;
+          } catch (_) {}
+        }
+      });
+    } catch (_) {}
+  };
+
   const applyOcean = (map) => {
-    const layer = map.getLayer("custom-ocean");
-    if (!layer) return;
-    if (oceanRef.current === "auto") {
-      // Transparent — Mapbox style's own water shows through
-      try { map.setPaintProperty("custom-ocean", "fill-opacity", 0); } catch (_) {}
-    } else {
-      const color = resolveOceanColor(oceanRef.current, isLightRef.current);
-      try {
-        map.setPaintProperty("custom-ocean", "fill-color",   color);
-        map.setPaintProperty("custom-ocean", "fill-opacity", 1);
-      } catch (_) {}
-    }
+    const isAuto = oceanRef.current === "auto";
+    const color = isAuto
+      ? null  // will restore per-layer defaults
+      : resolveOceanColor(oceanRef.current, isLightRef.current);
+    try {
+      const layers = map.getStyle()?.layers ?? [];
+      layers.forEach((layer) => {
+        if (layer.type === "fill" && /water/i.test(layer.id)) {
+          try {
+            const target = isAuto
+              ? (defaultWaterRef.current[layer.id] ?? null)
+              : color;
+            if (target !== null) map.setPaintProperty(layer.id, "fill-color", target);
+          } catch (_) {}
+        }
+      });
+    } catch (_) {}
   };
 
   const addLayers = (map, light) => {
     if (map.getSource("cities")) return;
     map.addSource("cities",    { type: "geojson", data: { type: "FeatureCollection", features: [] } });
     map.addSource("countries", { type: "geojson", data: { type: "FeatureCollection", features: [] } });
-
-    // Custom ocean overlay — uses Mapbox composite 'water' source layer.
-    // Far more reliable than searching style layers by ID (IDs vary by style version).
-    // opacity=0 for "auto" → Mapbox default water shows through; opacity=1 → our color.
-    try {
-      map.addLayer({
-        id: "custom-ocean", type: "fill",
-        source: "composite", "source-layer": "water",
-        paint: {
-          "fill-color":   resolveOceanColor(oceanRef.current, light),
-          "fill-opacity": oceanRef.current === "auto" ? 0 : 1,
-        },
-      });
-    } catch (_) {} // silently skip if composite source unavailable
+    // NOTE: no custom-ocean layer here — we use Mapbox's own water layers via captureDefaultWater + applyOcean
     map.addLayer({ id: "country-fill", type: "fill",   source: "countries", paint: { "fill-color": ["coalesce", ["get", "fillColor"], "transparent"], "fill-opacity": 0.35 } });
     map.addLayer({ id: "country-line", type: "line",   source: "countries", paint: { "line-color": ["coalesce", ["get", "fillColor"], "transparent"], "line-width": 0.8, "line-opacity": 0.6 } });
     map.addLayer({ id: "cities-glow",  type: "circle", source: "cities",    paint: { "circle-radius": ["*", ["get", "radius"], 2], "circle-color": ["get", "color"], "circle-opacity": 0.15, "circle-blur": 1 } });
@@ -453,8 +461,9 @@ export default function AirQuality({ data, loading, filters, metricMeta, theme, 
     map.on("load", () => {
       map.resize();
       applyBg(map, bgRef.current);
-      applyOcean(map);
       addLayers(map, styleRef.current.includes("light"));
+      captureDefaultWater(map);   // store originals BEFORE modifying
+      applyOcean(map);
       setDots(map);
       setChoropleth(map);
     });
@@ -472,8 +481,9 @@ export default function AirQuality({ data, loading, filters, metricMeta, theme, 
       map.setStyle(mapStyle);
       map.once("style.load", () => {
         applyBg(map, bgRef.current);
-        applyOcean(map);
         addLayers(map, mapStyle.includes("light"));
+        captureDefaultWater(map);   // re-capture after style reload
+        applyOcean(map);
         setDots(map); setChoropleth(map);
       });
     };
@@ -484,9 +494,10 @@ export default function AirQuality({ data, loading, filters, metricMeta, theme, 
   // ── Update bg + ocean on theme/ocean change — no style reload, dots unaffected ──
   useEffect(() => {
     const map = mapInst.current;
-    if (!map?.isStyleLoaded()) return;
-    applyBg(map, c.bg);
-    applyOcean(map);   // resolveOceanColor always returns a hex — just setPaintProperty
+    if (!map) return;
+    const apply = () => { applyBg(map, c.bg); applyOcean(map); };
+    if (map.isStyleLoaded()) apply();
+    else map.once("load", apply);  // retry after load (e.g. template load during init)
   }, [c.bg, oceanPreset]);
 
   // ── Update dots / choropleth ───────────────────────────────────────────────
