@@ -3,8 +3,9 @@ import mapboxgl from "mapbox-gl";
 import "mapbox-gl/dist/mapbox-gl.css";
 import { BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, LineChart, Line, Cell } from "recharts";
 import axios from "axios";
+import { getMetricColor, aqiStandardColor, interpolateColormap, COLORMAP_DEFS } from "../utils/colormaps";
 
-// ── AQI scale ─────────────────────────────────────────────────────────────────
+// ── AQI scale (for popup/tooltip badge colors — always AQI standard) ──────────
 const AQI_BANDS = [
   { label: "Good",           min: 0,   max: 50,  color: "#22c55e" },
   { label: "Moderate",       min: 51,  max: 100, color: "#eab308" },
@@ -13,15 +14,9 @@ const AQI_BANDS = [
   { label: "Very Unhealthy", min: 201, max: 300, color: "#a855f7" },
   { label: "Hazardous",      min: 301, max: 999, color: "#7f1d1d" },
 ];
-const aqiColor = (v) => {
-  if (v == null) return "#3a3a3a";
-  return AQI_BANDS.find((b) => v >= b.min && v <= b.max)?.color ?? "#7f1d1d";
-};
-const metricColor = (metric, v) => {
-  if (metric === "us_aqi" || metric === "european_aqi") return aqiColor(v);
-  if (v == null) return "#3a3a3a";
-  return v > 200 ? "#ef4444" : v > 100 ? "#f97316" : v > 50 ? "#eab308" : "#22c55e";
-};
+// aqiColor always uses AQI standard (for badges, trend lines, city popup)
+const aqiColor = aqiStandardColor;
+
 const dotRadius = (metric, v) => {
   if (v == null) return 5;
   if (metric === "us_aqi" || metric === "european_aqi")
@@ -30,7 +25,7 @@ const dotRadius = (metric, v) => {
 };
 
 // ── GeoJSON helpers ───────────────────────────────────────────────────────────
-const buildGeoJSON = (data, metric) => ({
+const buildGeoJSON = (data, metric, colormap = "aqi") => ({
   type: "FeatureCollection",
   features: (data || []).map((city) => {
     const val = city[metric] ?? city.us_aqi;
@@ -39,7 +34,7 @@ const buildGeoJSON = (data, metric) => ({
       geometry: { type: "Point", coordinates: [city.lon, city.lat] },
       properties: {
         id: city.location,
-        color: metricColor(metric, val),
+        color: getMetricColor(metric, val, colormap),
         radius: dotRadius(metric, val),
         cityJson: JSON.stringify(city),
       },
@@ -182,11 +177,13 @@ function TrendPanel({ city, metric, metricMeta, onClose, theme }) {
 }
 
 // ── Hover tooltip ─────────────────────────────────────────────────────────────
-function HoverTooltip({ info, W, H, theme }) {
+function HoverTooltip({ info, W, H, theme, metric, colormap }) {
   const c = theme.colors, mono = theme.typography.fontFamilyMono;
   const { city, x, y } = info;
   const factors = getFactors(city);
-  const aColor = aqiColor(city.us_aqi);
+  // Badge/border color matches the active colormap and metric
+  const metricVal = city[metric] ?? city.us_aqi;
+  const aColor = getMetricColor(metric ?? "us_aqi", metricVal, colormap ?? "aqi");
   const { left, top } = smartPos(x, y, W, H);
   return (
     <div style={{
@@ -267,7 +264,7 @@ function TopCities({ data, theme }) {
 }
 
 // ── Charts view ───────────────────────────────────────────────────────────────
-function ChartsView({ data, filters, metricMeta, theme }) {
+function ChartsView({ data, filters, metricMeta, theme, colormap }) {
   const c = theme.colors, mono = theme.typography.fontFamilyMono;
   const m = metricMeta?.[filters.metric] ?? { label: "US AQI", unit: "" };
   const sorted = [...(data || [])].filter((d) => d[filters.metric] != null)
@@ -289,7 +286,7 @@ function ChartsView({ data, filters, metricMeta, theme }) {
               labelStyle={{ color: c.text, fontWeight: 700 }} formatter={(v) => [v?.toFixed(1), m.label]} />
             <Bar dataKey="value" radius={[0, 3, 3, 0]}>
               {sorted.map((e, i) => (
-                <Cell key={i} fill={filters.metric === "us_aqi" || filters.metric === "european_aqi" ? aqiColor(e.aqi) : metricColor(filters.metric, e.value)} opacity={0.85} />
+                <Cell key={i} fill={getMetricColor(filters.metric, e.value, colormap)} opacity={0.85} />
               ))}
             </Bar>
           </BarChart>
@@ -303,19 +300,20 @@ function ChartsView({ data, filters, metricMeta, theme }) {
 const COUNTRY_URL = "https://d2ad6b4ur7yvpq.cloudfront.net/naturalearth-3.3.0/ne_110m_admin_0_countries.geojson";
 
 // ── Main component ────────────────────────────────────────────────────────────
-export default function AirQuality({ data, loading, filters, metricMeta, theme, viewMode, choropleth }) {
+export default function AirQuality({ data, loading, filters, metricMeta, theme, viewMode, choropleth, colormap = "aqi" }) {
   const c       = theme.colors;
   const mono    = theme.typography.fontFamilyMono;
   const isLight = !!(theme.meta.tags?.includes("light"));
   const mapStyle = isLight ? "mapbox://styles/mapbox/light-v11" : "mapbox://styles/mapbox/dark-v11";
 
-  const mapRef    = useRef(null);
-  const mapInst   = useRef(null);
-  const styleRef  = useRef(mapStyle);        // last style applied to map
-  const bgRef     = useRef(c.bg);            // last theme bg color
-  const dataRef   = useRef(data);
-  const metricRef = useRef(filters.metric);
-  const choroRef  = useRef(choropleth);
+  const mapRef      = useRef(null);
+  const mapInst     = useRef(null);
+  const styleRef    = useRef(mapStyle);
+  const bgRef       = useRef(c.bg);
+  const dataRef     = useRef(data);
+  const metricRef   = useRef(filters.metric);
+  const choroRef    = useRef(choropleth);
+  const colormapRef = useRef(colormap);
 
   const [cSize,     setCSize]     = useState({ w: 1200, h: 700 });
   const [popup,     setPopup]     = useState(null);
@@ -384,7 +382,7 @@ export default function AirQuality({ data, loading, filters, metricMeta, theme, 
 
   const setDots = (map) => {
     const src = map.getSource("cities");
-    if (src) src.setData(buildGeoJSON(dataRef.current, metricRef.current));
+    if (src) src.setData(buildGeoJSON(dataRef.current, metricRef.current, colormapRef.current));
   };
 
   const setChoropleth = async (map) => {
@@ -394,7 +392,13 @@ export default function AirQuality({ data, loading, filters, metricMeta, theme, 
     try {
       const gj = await fetch(COUNTRY_URL).then((r) => r.json());
       const avgs = buildCountryAvg(dataRef.current, metricRef.current);
-      src.setData({ ...gj, features: gj.features.map((f) => ({ ...f, properties: { ...f.properties, fillColor: avgs[f.properties.iso_a2] != null ? metricColor(metricRef.current, avgs[f.properties.iso_a2]) : null } })) });
+      src.setData({ ...gj, features: gj.features.map((f) => ({
+        ...f,
+        properties: { ...f.properties,
+          fillColor: avgs[f.properties.iso_a2] != null
+            ? getMetricColor(metricRef.current, avgs[f.properties.iso_a2], colormapRef.current)
+            : null }
+      })) });
     } catch (e) { console.error("choropleth", e); }
   };
 
@@ -450,13 +454,14 @@ export default function AirQuality({ data, loading, filters, metricMeta, theme, 
 
   // ── Update dots / choropleth ───────────────────────────────────────────────
   useEffect(() => {
-    dataRef.current = data; metricRef.current = filters.metric; choroRef.current = choropleth;
+    dataRef.current = data; metricRef.current = filters.metric;
+    choroRef.current = choropleth; colormapRef.current = colormap;
     const map = mapInst.current;
     if (!map) return;
     const update = () => { setDots(map); setChoropleth(map); };
     if (map.isStyleLoaded()) update();
     else map.once("load", update);
-  }, [data, filters.metric, choropleth]);
+  }, [data, filters.metric, choropleth, colormap]);
 
   // ── Render ─────────────────────────────────────────────────────────────────
   return (
@@ -467,7 +472,7 @@ export default function AirQuality({ data, loading, filters, metricMeta, theme, 
         outline: `6px solid ${c.bg}`, outlineOffset: "-6px" }} />
 
       {viewMode === "charts" && (
-        <ChartsView data={data} filters={filters} metricMeta={metricMeta} theme={theme} />
+        <ChartsView data={data} filters={filters} metricMeta={metricMeta} theme={theme} colormap={colormap} />
       )}
 
       {loading && !data.length && (
@@ -479,7 +484,7 @@ export default function AirQuality({ data, loading, filters, metricMeta, theme, 
 
       {viewMode === "map" && (
         <>
-          {hover && !popup && <HoverTooltip info={hover} W={cSize.w} H={cSize.h} theme={theme} />}
+          {hover && !popup && <HoverTooltip info={hover} W={cSize.w} H={cSize.h} theme={theme} metric={filters.metric} colormap={colormap} />}
           {popup && (
             <CityPopup city={popup.city} pos={popup} W={cSize.w}
               onClose={() => setPopup(null)} onViewTrend={(city) => setTrendCity(city)} theme={theme} />

@@ -1,4 +1,4 @@
-import { useRef } from "react";
+import { useRef, useEffect } from "react";
 
 // ── AQI color ─────────────────────────────────────────────────────────────────
 const AQI_BANDS = [
@@ -19,8 +19,14 @@ export function DraggableCard({ id, x: initX, y: initY, onPositionSave, children
   const ref  = useRef(null);
   const pos  = useRef({ x: initX ?? 12, y: initY ?? 56 });
 
-  // Update ref if card remounts with new defaults (e.g. toggled off/on without saved position)
-  if (pos.current.x == null) pos.current = { x: initX ?? 12, y: initY ?? 56 };
+  // Update position if parent forces a new x/y (align action)
+  useEffect(() => {
+    pos.current = { x: initX ?? 12, y: initY ?? 56 };
+    if (ref.current) {
+      ref.current.style.left = pos.current.x + "px";
+      ref.current.style.top  = pos.current.y + "px";
+    }
+  }, [initX, initY]);
 
   const onMouseDown = (e) => {
     if (e.button !== 0) return;
