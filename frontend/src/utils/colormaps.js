@@ -81,3 +81,20 @@ export const getMetricColor = (metric, value, colormapId = "aqi") => {
   const t = Math.min(1, Math.max(0, value / (METRIC_MAX[metric] ?? 500)));
   return interpolateColormap(colormapId, t);
 };
+
+// ── Ocean color presets ───────────────────────────────────────────────────────
+export const OCEAN_PRESETS = [
+  { id: "auto",     label: "Default",    color: null },
+  { id: "contrast", label: "Contrast",   color: null },
+  { id: "#1a3a5c",  label: "Blue",       color: "#1a3a5c" },
+  { id: "#04101e",  label: "Deep Blue",  color: "#04101e" },
+  { id: "#020507",  label: "Midnight",   color: "#020507" },
+  { id: "#c8b89a",  label: "Sand",       color: "#c8b89a" },
+];
+
+// Returns the hex color to apply, or null to trigger a style reset (Default)
+export const resolveOceanColor = (preset, isLight) => {
+  if (preset === "auto") return null;
+  if (preset === "contrast") return isLight ? "#04101e" : "#c8ddf0";
+  return preset; // direct hex
+};

@@ -3,7 +3,7 @@ import mapboxgl from "mapbox-gl";
 import "mapbox-gl/dist/mapbox-gl.css";
 import { BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, LineChart, Line, Cell } from "recharts";
 import axios from "axios";
-import { getMetricColor, aqiStandardColor, interpolateColormap, COLORMAP_DEFS } from "../utils/colormaps";
+import { getMetricColor, aqiStandardColor, interpolateColormap, COLORMAP_DEFS, resolveOceanColor } from "../utils/colormaps";
 
 // ── AQI scale (for popup/tooltip badge colors — always AQI standard) ──────────
 const AQI_BANDS = [
@@ -300,7 +300,7 @@ function ChartsView({ data, filters, metricMeta, theme, colormap }) {
 const COUNTRY_URL = "https://d2ad6b4ur7yvpq.cloudfront.net/naturalearth-3.3.0/ne_110m_admin_0_countries.geojson";
 
 // ── Main component ────────────────────────────────────────────────────────────
-export default function AirQuality({ data, loading, filters, metricMeta, theme, viewMode, choropleth, colormap = "aqi" }) {
+export default function AirQuality({ data, loading, filters, metricMeta, theme, viewMode, choropleth, colormap = "aqi", oceanPreset = "auto" }) {
   const c       = theme.colors;
   const mono    = theme.typography.fontFamilyMono;
   const isLight = !!(theme.meta.tags?.includes("light"));
@@ -314,6 +314,8 @@ export default function AirQuality({ data, loading, filters, metricMeta, theme, 
   const metricRef   = useRef(filters.metric);
   const choroRef    = useRef(choropleth);
   const colormapRef = useRef(colormap);
+  const oceanRef    = useRef(oceanPreset);
+  const isLightRef  = useRef(isLight);
 
   const [cSize,     setCSize]     = useState({ w: 1200, h: 700 });
   const [popup,     setPopup]     = useState(null);
@@ -329,23 +331,55 @@ export default function AirQuality({ data, loading, filters, metricMeta, theme, 
     return () => obs.disconnect();
   }, []);
 
+  // Keep refs current every render
+  bgRef.current       = c.bg;
+  isLightRef.current  = isLight;
+  colormapRef.current = colormap;
+  oceanRef.current    = oceanPreset;
+
   // ── Layer helpers (called after every style load) ──────────────────────────
   const applyBg = (map, color) => {
-    // 1. CSS on container + canvas so anything not covered by tiles matches theme
     try { map.getContainer().style.background = color; } catch (_) {}
-    try { map.getCanvas().style.background = color; } catch (_) {}
-    // 2. Find the Mapbox background layer by TYPE (ID varies across styles)
+    try { map.getCanvas().style.background    = color; } catch (_) {}
     try {
-      const layers = map.getStyle()?.layers ?? [];
-      const bgLayer = layers.find((l) => l.type === "background");
-      if (bgLayer) map.setPaintProperty(bgLayer.id, "background-color", color);
+      const bg = map.getStyle()?.layers?.find((l) => l.type === "background");
+      if (bg) map.setPaintProperty(bg.id, "background-color", color);
     } catch (_) {}
+  };
+
+  const applyOcean = (map) => {
+    const layer = map.getLayer("custom-ocean");
+    if (!layer) return;
+    if (oceanRef.current === "auto") {
+      // Transparent — Mapbox style's own water shows through
+      try { map.setPaintProperty("custom-ocean", "fill-opacity", 0); } catch (_) {}
+    } else {
+      const color = resolveOceanColor(oceanRef.current, isLightRef.current);
+      try {
+        map.setPaintProperty("custom-ocean", "fill-color",   color);
+        map.setPaintProperty("custom-ocean", "fill-opacity", 1);
+      } catch (_) {}
+    }
   };
 
   const addLayers = (map, light) => {
     if (map.getSource("cities")) return;
     map.addSource("cities",    { type: "geojson", data: { type: "FeatureCollection", features: [] } });
     map.addSource("countries", { type: "geojson", data: { type: "FeatureCollection", features: [] } });
+
+    // Custom ocean overlay — uses Mapbox composite 'water' source layer.
+    // Far more reliable than searching style layers by ID (IDs vary by style version).
+    // opacity=0 for "auto" → Mapbox default water shows through; opacity=1 → our color.
+    try {
+      map.addLayer({
+        id: "custom-ocean", type: "fill",
+        source: "composite", "source-layer": "water",
+        paint: {
+          "fill-color":   resolveOceanColor(oceanRef.current, light),
+          "fill-opacity": oceanRef.current === "auto" ? 0 : 1,
+        },
+      });
+    } catch (_) {} // silently skip if composite source unavailable
     map.addLayer({ id: "country-fill", type: "fill",   source: "countries", paint: { "fill-color": ["coalesce", ["get", "fillColor"], "transparent"], "fill-opacity": 0.35 } });
     map.addLayer({ id: "country-line", type: "line",   source: "countries", paint: { "line-color": ["coalesce", ["get", "fillColor"], "transparent"], "line-width": 0.8, "line-opacity": 0.6 } });
     map.addLayer({ id: "cities-glow",  type: "circle", source: "cities",    paint: { "circle-radius": ["*", ["get", "radius"], 2], "circle-color": ["get", "color"], "circle-opacity": 0.15, "circle-blur": 1 } });
@@ -417,8 +451,9 @@ export default function AirQuality({ data, loading, filters, metricMeta, theme, 
     map.addControl(new mapboxgl.ScaleControl({ unit: "metric" }), "bottom-right");
     map.addControl(new mapboxgl.AttributionControl({ compact: true }), "bottom-right");
     map.on("load", () => {
-      map.resize(); // ensure canvas fills container after CSS has applied
+      map.resize();
       applyBg(map, bgRef.current);
+      applyOcean(map);
       addLayers(map, styleRef.current.includes("light"));
       setDots(map);
       setChoropleth(map);
@@ -429,7 +464,7 @@ export default function AirQuality({ data, loading, filters, metricMeta, theme, 
 
   // ── Switch map style when light/dark changes ───────────────────────────────
   useEffect(() => {
-    if (mapStyle === styleRef.current) return;  // no change
+    if (mapStyle === styleRef.current) return;
     styleRef.current = mapStyle;
     const map = mapInst.current;
     if (!map) return;
@@ -437,6 +472,7 @@ export default function AirQuality({ data, loading, filters, metricMeta, theme, 
       map.setStyle(mapStyle);
       map.once("style.load", () => {
         applyBg(map, bgRef.current);
+        applyOcean(map);
         addLayers(map, mapStyle.includes("light"));
         setDots(map); setChoropleth(map);
       });
@@ -445,12 +481,13 @@ export default function AirQuality({ data, loading, filters, metricMeta, theme, 
     else map.once("load", apply);
   }, [mapStyle]);
 
-  // ── Update background when theme bg color changes (same light/dark, diff theme) ──
+  // ── Update bg + ocean on theme/ocean change — no style reload, dots unaffected ──
   useEffect(() => {
-    bgRef.current = c.bg;
     const map = mapInst.current;
-    if (map?.isStyleLoaded()) applyBg(map, c.bg);
-  }, [c.bg]);
+    if (!map?.isStyleLoaded()) return;
+    applyBg(map, c.bg);
+    applyOcean(map);   // resolveOceanColor always returns a hex — just setPaintProperty
+  }, [c.bg, oceanPreset]);
 
   // ── Update dots / choropleth ───────────────────────────────────────────────
   useEffect(() => {
