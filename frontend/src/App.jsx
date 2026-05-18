@@ -3,12 +3,6 @@ import { useTheme } from "./theme/ThemeProvider";
 import { BUILT_IN_THEMES } from "./theme/themes";
 import { COLORMAP_DEFS, OCEAN_PRESETS, resolveOceanColor } from "./utils/colormaps";
 
-// Thin wrapper for preview swatches (doesn't need bgRef etc.)
-const resolveOceanColorPreview = (preset, isLight) => {
-  if (!preset || preset === "auto") return isLight ? "#a0c0d8" : "#0d1b2a";
-  if (preset === "contrast")        return isLight ? "#04101e" : "#c8ddf0";
-  return preset;
-};
 import AirQuality from "./pages/AirQuality";
 import UVIndex from "./pages/UVIndex";
 import CarbonCalculator from "./pages/CarbonCalculator";
@@ -166,7 +160,8 @@ function SettingsModal({ open, onClose, theme,
   kpiState, onKpiToggle, onAlignCards,
   colormap, onColormap,
   oceanPreset, onOcean,
-  onManageTemplates }) {
+  onManageTemplates,
+  themeSyncing, onRefreshThemeState }) {
   const c = theme.colors, mono = theme.typography.fontFamilyMono;
   if (!open) return null;
 
@@ -280,12 +275,8 @@ function SettingsModal({ open, onClose, theme,
               {OCEAN_PRESETS.map(({ id, label }) => {
                 const active = oceanPreset === id;
                 const isLt   = theme.meta.tags?.includes("light");
-                // Always show the actual color this preset produces
-                const previewColor = id === "auto"
-                  ? (isLt ? "#a0c0d8" : "#0d1b2a")
-                  : id === "contrast"
-                  ? (isLt ? "#04101e" : "#c8ddf0")
-                  : id; // direct hex
+                // Use the same resolver as the map/template previews.
+                const previewColor = resolveOceanColor(id, isLt);
                 return (
                   <button key={id} onClick={()=>onOcean(id)} style={{
                     background: c.surface,
@@ -329,6 +320,21 @@ function SettingsModal({ open, onClose, theme,
           <span style={{ fontFamily:mono, fontSize:9, color:c.textSubtle }}>
             Save &amp; load full layouts
           </span>
+          <div style={{
+            marginLeft:"auto", display:"flex", alignItems:"center", gap:8,
+            fontFamily:mono, fontSize:9,
+            color: themeSyncing ? c.accent : c.textSubtle,
+            opacity: themeSyncing ? 1 : 0.65,
+          }}>
+            <span>{themeSyncing ? "Loading theme…" : "Theme ready"}</span>
+            <button onClick={onRefreshThemeState} title="Refresh theme/map state" style={{
+              width:24, height:24, borderRadius:"50%",
+              border:`1px solid ${c.border}`, background:c.surface,
+              color:c.textMuted, cursor:"pointer",
+              fontFamily:mono, fontSize:13, lineHeight:1,
+              display:"flex", alignItems:"center", justifyContent:"center",
+            }}>↻</button>
+          </div>
         </div>
       </div>
     </>
@@ -440,7 +446,7 @@ function TemplateModal({ open, onClose, onLoad, currentState, theme }) {
             {entries.map(([key, tmpl]) => {
               const savedTheme = BUILT_IN_THEMES.find(t=>t.meta.id===tmpl.themeId) ?? BUILT_IN_THEMES[0];
               const cmStops   = COLORMAP_DEFS[tmpl.colormap ?? "aqi"]?.stops ?? [];
-              const oceanColor = resolveOceanColorPreview(tmpl.oceanPreset, savedTheme.meta.tags?.includes("light"));
+              const oceanColor = resolveOceanColor(tmpl.oceanPreset, savedTheme.meta.tags?.includes("light"));
               const isKabob   = kabob === key;
               return (
                 <div key={key} style={{ position:"relative", borderRadius:8, overflow:"visible" }}>
@@ -700,6 +706,8 @@ export default function App() {
   const [choropleth,   setChoropleth]   = useState("none");
   const [colormap,     setColormap]     = useState("aqi");
   const [oceanPreset,  setOceanPreset]  = useState("auto");
+  const [themeSyncing, setThemeSyncing] = useState(false);
+  const [oceanRefreshKey, setOceanRefreshKey] = useState(0);
   const [aqiData,      setAqiData]      = useState([]);
   const [loading,      setLoading]      = useState(true);
   const [lastUpdate,   setLastUpdate]   = useState(null);
@@ -730,6 +738,25 @@ export default function App() {
   };
 
   useEffect(() => { fetchAQI(); }, [filters.region, filters.minPop]);
+
+  const markThemeSyncing = (ms = 1100) => {
+    setThemeSyncing(true);
+    window.setTimeout(() => setThemeSyncing(false), ms);
+  };
+
+  useEffect(() => {
+    markThemeSyncing(900);
+  }, [theme.meta.id]);
+
+  const handleOceanChange = (next) => {
+    markThemeSyncing(1200);
+    setOceanPreset(next);
+  };
+
+  const handleRefreshThemeState = () => {
+    markThemeSyncing(1300);
+    setOceanRefreshKey((v) => v + 1);
+  };
 
   const handleKpiToggle = (id) =>
     setKpiState((prev) => prev.map((k) => k.id===id ? {...k,visible:!k.visible} : k));
@@ -801,7 +828,7 @@ export default function App() {
     const t = templates[name];
     if (t.themeId && switchTheme) switchTheme(t.themeId);   // directly apply theme
     if (t.colormap) setColormap(t.colormap);
-    if (t.oceanPreset) setOceanPreset(t.oceanPreset);
+    if (t.oceanPreset) handleOceanChange(t.oceanPreset);
     if (t.kpiState) setKpiState(t.kpiState);
   };
 
@@ -869,7 +896,8 @@ export default function App() {
         {activeTab==="aqi" && (
           <AirQuality data={aqiData} loading={loading} filters={filters}
             metricMeta={METRIC_META} theme={theme}
-            viewMode={viewMode} choropleth={choropleth} colormap={colormap} oceanPreset={oceanPreset}/>
+            viewMode={viewMode} choropleth={choropleth} colormap={colormap}
+            oceanPreset={oceanPreset} oceanRefreshKey={oceanRefreshKey}/>
         )}
         {activeTab==="uv"     && <UVIndex data={aqiData} loading={loading} theme={theme}/>}
         {activeTab==="carbon" && <CarbonCalculator theme={theme}/>}
@@ -886,7 +914,8 @@ export default function App() {
         kpiState={kpiState} onKpiToggle={handleKpiToggle}
         onAlignCards={handleAlignCards}
         colormap={colormap} onColormap={setColormap}
-        oceanPreset={oceanPreset} onOcean={setOceanPreset}
+        oceanPreset={oceanPreset} onOcean={handleOceanChange}
+        themeSyncing={themeSyncing} onRefreshThemeState={handleRefreshThemeState}
         onManageTemplates={()=>{setSettingsOpen(false);setTemplateOpen(true);}}/>
 
       <TemplateModal
@@ -897,7 +926,7 @@ export default function App() {
         onLoad={(tmpl)=>{
           if (tmpl.themeId && switchTheme) switchTheme(tmpl.themeId);
           if (tmpl.colormap)    setColormap(tmpl.colormap);
-          if (tmpl.oceanPreset) setOceanPreset(tmpl.oceanPreset);
+          if (tmpl.oceanPreset) handleOceanChange(tmpl.oceanPreset);
           if (tmpl.kpiState)    setKpiState(tmpl.kpiState);
         }}/>
 

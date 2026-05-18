@@ -264,20 +264,28 @@ function TopCities({ data, theme }) {
 }
 
 // ── Charts view ───────────────────────────────────────────────────────────────
-function ChartsView({ data, filters, metricMeta, theme, colormap }) {
+function ChartsView({ data, filters, metricMeta, theme, colormap, active }) {
   const c = theme.colors, mono = theme.typography.fontFamilyMono;
   const m = metricMeta?.[filters.metric] ?? { label: "US AQI", unit: "" };
   const sorted = [...(data || [])].filter((d) => d[filters.metric] != null)
     .sort((a, b) => (b[filters.metric] ?? 0) - (a[filters.metric] ?? 0)).slice(0, 30)
     .map((d) => ({ name: d.location, value: d[filters.metric], aqi: d.us_aqi }));
   return (
-    <div style={{ position: "absolute", inset: 0, background: c.bg, display: "flex", flexDirection: "column", overflow: "hidden" }}>
+    <div style={{
+      position: "absolute", inset: 0, zIndex: active ? 5 : 0,
+      background: c.bg, display: "flex", flexDirection: "column", overflow: "hidden",
+      opacity: active ? 1 : 0,
+      visibility: active ? "visible" : "hidden",
+      pointerEvents: active ? "auto" : "none",
+      width: "100%", height: "100%", minHeight: 0,
+      transition: "opacity 0.18s ease",
+    }}>
       <div style={{ padding: "16px 24px 8px", flexShrink: 0 }}>
         <div style={{ fontFamily: mono, fontSize: 9, letterSpacing: "0.2em", color: c.textSubtle, textTransform: "uppercase" }}>
           {m.label}{m.unit ? ` (${m.unit})` : ""} · TOP 30 CITIES · {(data || []).length} TOTAL
         </div>
       </div>
-      <div style={{ flex: 1, padding: "0 16px 16px" }}>
+      <div style={{ flex: 1, minHeight: 300, width: "100%", padding: "0 16px 16px" }}>
         <ResponsiveContainer width="100%" height="100%">
           <BarChart data={sorted} layout="vertical" margin={{ top: 0, right: 60, left: 90, bottom: 0 }}>
             <XAxis type="number" tick={{ fill: c.textSubtle, fontSize: 9, fontFamily: mono }} axisLine={{ stroke: c.border }} tickLine={false} />
@@ -300,7 +308,7 @@ function ChartsView({ data, filters, metricMeta, theme, colormap }) {
 const COUNTRY_URL = "https://d2ad6b4ur7yvpq.cloudfront.net/naturalearth-3.3.0/ne_110m_admin_0_countries.geojson";
 
 // ── Main component ────────────────────────────────────────────────────────────
-export default function AirQuality({ data, loading, filters, metricMeta, theme, viewMode, choropleth, colormap = "aqi", oceanPreset = "auto" }) {
+export default function AirQuality({ data, loading, filters, metricMeta, theme, viewMode, choropleth, colormap = "aqi", oceanPreset = "auto", oceanRefreshKey = 0 }) {
   const c       = theme.colors;
   const mono    = theme.typography.fontFamilyMono;
   const isLight = !!(theme.meta.tags?.includes("light"));
@@ -315,8 +323,14 @@ export default function AirQuality({ data, loading, filters, metricMeta, theme, 
   const choroRef    = useRef(choropleth);
   const colormapRef = useRef(colormap);
   const oceanRef    = useRef(oceanPreset);
-  const isLightRef  = useRef(isLight);
-  const defaultWaterRef = useRef({});  // stores Mapbox's original water layer colors
+  const lastOceanPresetRef     = useRef(oceanPreset);
+  const lastOceanRefreshKeyRef = useRef(oceanRefreshKey);
+  const styleReloadSeqRef      = useRef(0);
+  const eventsBoundRef         = useRef(false);
+  const isLightRef             = useRef(isLight);
+  // Snapshot of Mapbox's native water fill colors, captured after each style load.
+  // Used by resetOcean() to restore Default without a destructive setStyle() call.
+  const originalWaterColorsRef = useRef({});
 
   const [cSize,     setCSize]     = useState({ w: 1200, h: 700 });
   const [popup,     setPopup]     = useState(null);
@@ -348,52 +362,94 @@ export default function AirQuality({ data, loading, filters, metricMeta, theme, 
     } catch (_) {}
   };
 
-  // Capture Mapbox's original water layer colors once on load (for "Default" restoration)
-  const captureDefaultWater = (map) => {
-    defaultWaterRef.current = {};
+  // Snapshot the native Mapbox water fill colors BEFORE applyOcean() mutates them.
+  // Must be called once per style load (inside rehydrateMapLayers, after addLayers).
+  const captureWaterColors = (map) => {
+    const colors = {};
     try {
       (map.getStyle()?.layers ?? []).forEach((layer) => {
-        if (layer.type === "fill" && /water/i.test(layer.id)) {
+        if (layer.type === "fill" && /^water/i.test(layer.id)) {
           try {
-            const color = map.getPaintProperty(layer.id, "fill-color");
-            if (color) defaultWaterRef.current[layer.id] = color;
+            const v = map.getPaintProperty(layer.id, "fill-color");
+            if (v != null) colors[layer.id] = v;
           } catch (_) {}
         }
       });
     } catch (_) {}
+    originalWaterColorsRef.current = colors;
+  };
+
+  // Restore the snapshotted native water colors via direct setPaintProperty.
+  // This replaces the old reloadNativeStyle() approach — no setStyle() needed,
+  // so custom sources/layers are never wiped and dots are never lost.
+  const resetOcean = (map) => {
+    try {
+      Object.entries(originalWaterColorsRef.current).forEach(([id, color]) => {
+        try { map.setPaintProperty(id, "fill-color", color); } catch (_) {}
+      });
+    } catch (_) {}
+  };
+
+  const rehydrateMapLayers = (map, light) => {
+    // After map.setStyle(), Mapbox drops all custom sources/layers.
+    // This puts every app overlay back using the *current* refs:
+    // dots, choropleth, active metric, active colormap, and current ocean preset.
+    applyBg(map, bgRef.current);
+    addLayers(map, light);
+    captureWaterColors(map); // snapshot native water colors before applyOcean mutates them
+    applyOcean(map);
+    setDots(map);
+    setChoropleth(map);
+
+    // One extra idle pass prevents race-y style/theme transitions where the base
+    // style finishes a tick after our overlay data update.
+    map.once("idle", () => {
+      try {
+        setDots(map);
+        setChoropleth(map);
+      } catch (_) {}
+    });
   };
 
   const applyOcean = (map) => {
-    const isAuto = oceanRef.current === "auto";
-    const color = isAuto
-      ? null  // will restore per-layer defaults
-      : resolveOceanColor(oceanRef.current, isLightRef.current);
+    // Custom presets mutate Mapbox's native water layers.
+    // Default/Auto is handled by resetOcean() — no style reload required.
+    if (!oceanRef.current || oceanRef.current === "auto") return;
+
+    const color = resolveOceanColor(oceanRef.current, isLightRef.current);
     try {
-      const layers = map.getStyle()?.layers ?? [];
-      layers.forEach((layer) => {
-        if (layer.type === "fill" && /water/i.test(layer.id)) {
-          try {
-            const target = isAuto
-              ? (defaultWaterRef.current[layer.id] ?? null)
-              : color;
-            if (target !== null) map.setPaintProperty(layer.id, "fill-color", target);
-          } catch (_) {}
+      (map.getStyle()?.layers ?? []).forEach((layer) => {
+        // Keep this narrow so labels/terrain/background layers are not affected.
+        if (layer.type === "fill" && /^water/i.test(layer.id)) {
+          try { map.setPaintProperty(layer.id, "fill-color", color); } catch (_) {}
         }
       });
     } catch (_) {}
   };
 
   const addLayers = (map, light) => {
-    if (map.getSource("cities")) return;
-    map.addSource("cities",    { type: "geojson", data: { type: "FeatureCollection", features: [] } });
-    map.addSource("countries", { type: "geojson", data: { type: "FeatureCollection", features: [] } });
-    // NOTE: no custom-ocean layer here — we use Mapbox's own water layers via captureDefaultWater + applyOcean
-    map.addLayer({ id: "country-fill", type: "fill",   source: "countries", paint: { "fill-color": ["coalesce", ["get", "fillColor"], "transparent"], "fill-opacity": 0.35 } });
-    map.addLayer({ id: "country-line", type: "line",   source: "countries", paint: { "line-color": ["coalesce", ["get", "fillColor"], "transparent"], "line-width": 0.8, "line-opacity": 0.6 } });
-    map.addLayer({ id: "cities-glow",  type: "circle", source: "cities",    paint: { "circle-radius": ["*", ["get", "radius"], 2], "circle-color": ["get", "color"], "circle-opacity": 0.15, "circle-blur": 1 } });
-    map.addLayer({ id: "cities-dots",  type: "circle", source: "cities",    paint: { "circle-radius": ["get", "radius"], "circle-color": ["get", "color"], "circle-opacity": 0.85, "circle-stroke-width": 1.5, "circle-stroke-color": ["get", "color"], "circle-stroke-opacity": 0.4 } });
-    map.addLayer({ id: "cities-hover", type: "circle", source: "cities", filter: ["==", "id", ""],
+    if (!map.getSource("cities")) {
+      map.addSource("cities", { type: "geojson", data: { type: "FeatureCollection", features: [] } });
+    }
+    if (!map.getSource("countries")) {
+      map.addSource("countries", { type: "geojson", data: { type: "FeatureCollection", features: [] } });
+    }
+
+    // NOTE: no custom-ocean layer here — we use Mapbox's own water layers via applyOcean.
+    // Add each overlay idempotently because setStyle() can leave us in partial states.
+    if (!map.getLayer("country-fill")) map.addLayer({ id: "country-fill", type: "fill", source: "countries", paint: { "fill-color": ["coalesce", ["get", "fillColor"], "transparent"], "fill-opacity": 0.35 } });
+    if (!map.getLayer("country-line")) map.addLayer({ id: "country-line", type: "line", source: "countries", paint: { "line-color": ["coalesce", ["get", "fillColor"], "transparent"], "line-width": 0.8, "line-opacity": 0.6 } });
+    if (!map.getLayer("cities-glow")) map.addLayer({ id: "cities-glow", type: "circle", source: "cities", paint: { "circle-radius": ["*", ["get", "radius"], 2], "circle-color": ["get", "color"], "circle-opacity": 0.15, "circle-blur": 1 } });
+    if (!map.getLayer("cities-dots")) map.addLayer({ id: "cities-dots", type: "circle", source: "cities", paint: { "circle-radius": ["get", "radius"], "circle-color": ["get", "color"], "circle-opacity": 0.85, "circle-stroke-width": 1.5, "circle-stroke-color": ["get", "color"], "circle-stroke-opacity": 0.4 } });
+    if (!map.getLayer("cities-hover")) map.addLayer({ id: "cities-hover", type: "circle", source: "cities", filter: ["==", "id", ""],
       paint: { "circle-radius": ["*", ["get", "radius"], 1.5], "circle-color": "transparent", "circle-stroke-width": 2, "circle-stroke-color": light ? "#333" : "#fff", "circle-stroke-opacity": 0 } });
+
+    if (map.getLayer("cities-hover")) {
+      map.setPaintProperty("cities-hover", "circle-stroke-color", light ? "#333" : "#fff");
+    }
+
+    if (eventsBoundRef.current) return;
+    eventsBoundRef.current = true;
 
     map.on("mouseenter", "cities-dots", (e) => {
       map.getCanvas().style.cursor = "pointer";
@@ -460,12 +516,7 @@ export default function AirQuality({ data, loading, filters, metricMeta, theme, 
     map.addControl(new mapboxgl.AttributionControl({ compact: true }), "bottom-right");
     map.on("load", () => {
       map.resize();
-      applyBg(map, bgRef.current);
-      addLayers(map, styleRef.current.includes("light"));
-      captureDefaultWater(map);   // store originals BEFORE modifying
-      applyOcean(map);
-      setDots(map);
-      setChoropleth(map);
+      rehydrateMapLayers(map, styleRef.current.includes("light"));
     });
     mapInst.current = map;
     return () => { map.remove(); mapInst.current = null; };
@@ -477,28 +528,49 @@ export default function AirQuality({ data, loading, filters, metricMeta, theme, 
     styleRef.current = mapStyle;
     const map = mapInst.current;
     if (!map) return;
+
     const apply = () => {
+      const seq = ++styleReloadSeqRef.current;
       map.setStyle(mapStyle);
       map.once("style.load", () => {
-        applyBg(map, bgRef.current);
-        addLayers(map, mapStyle.includes("light"));
-        captureDefaultWater(map);   // re-capture after style reload
-        applyOcean(map);
-        setDots(map); setChoropleth(map);
+        if (seq !== styleReloadSeqRef.current) return;
+        rehydrateMapLayers(map, mapStyle.includes("light"));
       });
     };
+
     if (map.isStyleLoaded()) apply();
-    else map.once("load", apply);
+    else map.once("style.load", apply);
   }, [mapStyle]);
 
-  // ── Update bg + ocean on theme/ocean change — no style reload, dots unaffected ──
+  // ── Update bg + ocean on theme/ocean change ────────────────────────────────
   useEffect(() => {
     const map = mapInst.current;
     if (!map) return;
-    const apply = () => { applyBg(map, c.bg); applyOcean(map); };
+
+    const previousOceanPreset = lastOceanPresetRef.current;
+    const refreshRequested = oceanRefreshKey !== lastOceanRefreshKeyRef.current;
+    lastOceanPresetRef.current = oceanPreset;
+    lastOceanRefreshKeyRef.current = oceanRefreshKey;
+
+    const apply = () => {
+      applyBg(map, c.bg);
+
+      // Switching back to Default (or manual refresh): restore native water colors
+      // directly via resetOcean() — no setStyle() needed, so dots are never wiped.
+      if ((!oceanPreset || oceanPreset === "auto") && (previousOceanPreset !== "auto" || refreshRequested)) {
+        resetOcean(map);
+      } else {
+        applyOcean(map);
+      }
+
+      // Always repaint dots and choropleth — no early return.
+      setDots(map);
+      setChoropleth(map);
+    };
+
     if (map.isStyleLoaded()) apply();
-    else map.once("load", apply);  // retry after load (e.g. template load during init)
-  }, [c.bg, oceanPreset]);
+    else map.once("style.load", apply);
+  }, [c.bg, oceanPreset, oceanRefreshKey]);
 
   // ── Update dots / choropleth ───────────────────────────────────────────────
   useEffect(() => {
@@ -508,20 +580,39 @@ export default function AirQuality({ data, loading, filters, metricMeta, theme, 
     if (!map) return;
     const update = () => { setDots(map); setChoropleth(map); };
     if (map.isStyleLoaded()) update();
-    else map.once("load", update);
+    else map.once("style.load", update);
   }, [data, filters.metric, choropleth, colormap]);
+
+  // Recharts and Mapbox both need clean container sizing when switching views.
+  // This keeps the hidden map from visually competing with the chart layer, then
+  // resizes the map when returning to map mode.
+  useEffect(() => {
+    if (viewMode === "map" && mapInst.current) {
+      window.requestAnimationFrame(() => mapInst.current?.resize());
+    }
+  }, [viewMode]);
 
   // ── Render ─────────────────────────────────────────────────────────────────
   return (
     <div ref={containerRef} style={{ position: "absolute", inset: 0, background: c.bg }}>
-      <div ref={mapRef} style={{ position: "absolute", inset: 0 }} />
+      <div ref={mapRef} style={{
+        position: "absolute", inset: 0, zIndex: 0,
+        opacity: viewMode === "map" ? 1 : 0,
+        visibility: viewMode === "map" ? "visible" : "hidden",
+        pointerEvents: viewMode === "map" ? "auto" : "none",
+      }} />
       {/* Inset border to cover Mapbox edge artifacts with theme color */}
       <div style={{ position:"absolute", inset:0, pointerEvents:"none", zIndex:1,
         outline: `6px solid ${c.bg}`, outlineOffset: "-6px" }} />
 
-      {viewMode === "charts" && (
-        <ChartsView data={data} filters={filters} metricMeta={metricMeta} theme={theme} colormap={colormap} />
-      )}
+      <ChartsView
+        data={data}
+        filters={filters}
+        metricMeta={metricMeta}
+        theme={theme}
+        colormap={colormap}
+        active={viewMode === "charts"}
+      />
 
       {loading && !data.length && (
         <div style={{ position: "absolute", inset: 0, zIndex: 20, display: "flex", alignItems: "center", justifyContent: "center", flexDirection: "column", gap: 10, background: `${c.bg}cc`, backdropFilter: "blur(4px)", pointerEvents: "none" }}>
