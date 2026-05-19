@@ -1,4 +1,4 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useRef } from "react";
 import { useTheme } from "./theme/ThemeProvider";
 import { BUILT_IN_THEMES } from "./theme/themes";
 import { COLORMAP_DEFS, OCEAN_PRESETS, resolveOceanColor } from "./utils/colormaps";
@@ -18,7 +18,7 @@ const TABS = [
   { id:"chat",   label:"Query Chat"        },
 ];
 const REGIONS = [
-  "All Regions","Canada","United States","Central America","South America",
+  "All Regions","North America","Canada","United States","Central America","South America",
   "Europe","Africa","Middle East","Asia","Central Asia","Oceania",
 ];
 const METRICS = [
@@ -548,8 +548,7 @@ function TemplateModal({ open, onClose, onLoad, currentState, theme }) {
 function SidePanel({
   open, filters, onFilter, onRefresh, loading, histLoading,
   viewMode, onViewMode,
-  choropleth, onChoropleth,
-  borderLevel, onBorderLevel,
+  choroplethOn, onChoroplethOn,
   showCities, onShowCities,
   satellite, onSatellite,
   timeWindow, onTimeWindow,
@@ -593,26 +592,6 @@ function SidePanel({
           transition:"left 0.18s",
         }}/>
       </button>
-    </div>
-  );
-
-  const PillGroup = ({ options, value, onChange }) => (
-    <div style={{ display:"flex", gap:4, marginBottom:12 }}>
-      {options.map(opt => {
-        const active = value === opt.id;
-        return (
-          <button key={opt.id} onClick={()=>onChange(opt.id)} style={{
-            flex:1, padding:"6px 4px",
-            background: active ? c.accentSubtle : c.surface,
-            border:`1px solid ${active ? c.accent : c.border}`,
-            borderRadius:theme.shape.buttonRadius,
-            color: active ? c.accent : c.textMuted,
-            fontFamily:mono, fontSize:9, cursor:"pointer",
-            letterSpacing:"0.06em", textTransform:"uppercase",
-            transition:"all 0.15s",
-          }}>{opt.label}</button>
-        );
-      })}
     </div>
   );
 
@@ -743,29 +722,9 @@ function SidePanel({
         {viewMode === "map" && (
           <>
             <SecLabel>Layers</SecLabel>
-            <Toggle label="City Circles" value={showCities} onChange={onShowCities} />
-            <Toggle label="Satellite"    value={satellite}  onChange={onSatellite}  />
-
-            <div style={{ marginTop:12 }}>
-              <SecLabel>Borders</SecLabel>
-              <PillGroup
-                value={borderLevel}
-                onChange={onBorderLevel}
-                options={[
-                  { id:"none",     label:"None"     },
-                  { id:"country",  label:"Country"  },
-                  { id:"province", label:"Province" },
-                ]}
-              />
-            </div>
-
-            <SecLabel>Plots</SecLabel>
-            <ModePill
-              value={choropleth}
-              onChange={onChoropleth}
-              options={[{id:"none",label:"Dots"},{id:"country",label:"Choropleth"}]}
-              theme={theme}
-            />
+            <Toggle label="City Circles"       value={showCities}   onChange={onShowCities}   />
+            <Toggle label="Satellite"          value={satellite}    onChange={onSatellite}    />
+            <Toggle label="Choropleth Borders" value={choroplethOn} onChange={onChoroplethOn} />
           </>
         )}
 
@@ -851,10 +810,10 @@ export default function App() {
   const [filtersOpen,     setFiltersOpen]     = useState(false);
   const [settingsOpen,    setSettingsOpen]    = useState(false);
   const [templateOpen,    setTemplateOpen]    = useState(false);
+  const downloadRef = useRef(null); // populated by AirQuality
   const [filters,         setFilters]         = useState({ region:"All Regions", metric:"us_aqi" });
   const [viewMode,        setViewMode]        = useState("map");
-  const [choropleth,      setChoropleth]      = useState("none");
-  const [borderLevel,     setBorderLevel]     = useState("country");
+  const [choroplethOn,    setChoroplethOn]    = useState(false);
   const [showCities,      setShowCities]      = useState(true);
   const [satellite,       setSatellite]       = useState(false);
   const [colormap,        setColormap]        = useState("aqi");
@@ -880,14 +839,29 @@ export default function App() {
     localStorage.setItem("kpi_state", JSON.stringify(kpiState));
   }, [kpiState]);
 
+  // "North America" is a client-side meta-region — fetched as 3 sub-regions in parallel
+  const NA_SUB_REGIONS = ["Canada", "United States", "Central America"];
+  const isNorthAmerica  = (r) => r === "North America";
+
+  const fetchRegion = async (endpoint, params, region) => {
+    if (isNorthAmerica(region)) {
+      const results = await Promise.all(
+        NA_SUB_REGIONS.map((r) => axios.get(endpoint, { params: { ...params, region: r } }).then((x) => x.data))
+      );
+      const seen = new Set();
+      return results.flat().filter((d) => { if (seen.has(d.location)) return false; seen.add(d.location); return true; });
+    }
+    if (region !== "All Regions") params.region = region;
+    const { data: d } = await axios.get(endpoint, { params });
+    return d;
+  };
+
   // Live data fetch
   const fetchAQI = async () => {
     setLoading(true);
     try {
-      const params = {};
-      if (filters.region !== "All Regions") params.region = filters.region;
-      const { data } = await axios.get("/api/aqi", { params });
-      setAqiData(data);
+      const cities = await fetchRegion("/api/aqi", {}, filters.region);
+      setAqiData(Array.isArray(cities) ? cities : []);
     } catch (e) { console.error("AQI fetch failed", e); }
     finally { setLoading(false); }
   };
@@ -900,10 +874,14 @@ export default function App() {
     const win = TIME_WINDOWS.find(w => w.id === timeWindow);
     if (!win?.days) return;
     setHistLoading(true);
-    const params = { days: win.days };
-    if (filters.region !== "All Regions") params.region = filters.region;
-    axios.get("/api/snapshot", { params })
-      .then(({ data: d }) => setHistoricalData(Array.isArray(d) ? d : []))
+    fetchRegion("/api/snapshot", { days: win.days }, filters.region)
+      .then((d) => {
+        if (Array.isArray(d)) {
+          // Deduplicate by location — snapshot can return multiple rows per city
+          const seen = new Set();
+          setHistoricalData(d.filter((c) => { if (seen.has(c.location)) return false; seen.add(c.location); return true; }));
+        } else { setHistoricalData([]); }
+      })
       .catch((e) => { console.error("Historical fetch failed", e); setHistoricalData([]); })
       .finally(() => setHistLoading(false));
   }, [timeWindow, filters.region]);
@@ -1035,6 +1013,24 @@ export default function App() {
               ? <span style={{color:c.warning}}>● {histLoading?"Historical…":"Loading"}</span>
               : <span>{displayData.length} cities</span>}
           </div>
+          {/* Download buttons */}
+          {[
+            { id:"csv", label:"⬇ CSV", title:"Download data as CSV" },
+            { id:"png", label:"⬇ PNG", title:"Download view as PNG" },
+          ].map(({ id, label, title }) => (
+            <button key={id} onClick={() => downloadRef.current?.[id]?.()}
+              title={title} style={{
+                height:TAB_H, padding:"0 12px",
+                background:"transparent", border:"none",
+                borderLeft:`1px solid ${c.border}`,
+                color:c.textMuted, fontFamily:mono, fontSize:9,
+                letterSpacing:"0.1em", textTransform:"uppercase",
+                cursor:"pointer", transition:"all 0.15s",
+              }}
+              onMouseEnter={(e) => { e.currentTarget.style.color = c.accent; e.currentTarget.style.background = c.accentSubtle; }}
+              onMouseLeave={(e) => { e.currentTarget.style.color = c.textMuted; e.currentTarget.style.background = "transparent"; }}
+            >{label}</button>
+          ))}
           <div style={{ width:1, height:22, background:c.border }}/>
           <ICON_BTN onClick={()=>setSettingsOpen(v=>!v)} title="Settings" active={settingsOpen}>
             ⚙
@@ -1049,10 +1045,12 @@ export default function App() {
           <AirQuality
             data={displayData} loading={isDataLoading} filters={filters}
             metricMeta={METRIC_META} theme={theme}
-            viewMode={viewMode} choropleth={choropleth} colormap={colormap}
+            viewMode={viewMode} choroplethOn={choroplethOn} colormap={colormap}
             oceanPreset={oceanPreset} oceanRefreshKey={oceanRefreshKey}
-            borderLevel={borderLevel} showCities={showCities} satellite={satellite}
+            showCities={showCities} satellite={satellite}
             chartType={chartType} onChartType={setChartType}
+            timeWindow={timeWindow}
+            downloadRef={downloadRef}
           />
         )}
         {activeTab==="uv"     && <UVIndex data={displayData} loading={isDataLoading} theme={theme}/>}
@@ -1065,8 +1063,7 @@ export default function App() {
         filters={filters} onFilter={setFilters}
         onRefresh={fetchAQI} loading={loading} histLoading={histLoading}
         viewMode={viewMode} onViewMode={setViewMode}
-        choropleth={choropleth} onChoropleth={setChoropleth}
-        borderLevel={borderLevel} onBorderLevel={setBorderLevel}
+        choroplethOn={choroplethOn} onChoroplethOn={setChoroplethOn}
         showCities={showCities} onShowCities={setShowCities}
         satellite={satellite} onSatellite={setSatellite}
         timeWindow={timeWindow} onTimeWindow={setTimeWindow}

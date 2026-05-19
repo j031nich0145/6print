@@ -3,7 +3,7 @@ import mapboxgl from "mapbox-gl";
 import "mapbox-gl/dist/mapbox-gl.css";
 import {
   BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer,
-  LineChart, Line, Cell,
+  LineChart, Line, Cell, CartesianGrid,
   ScatterChart, Scatter, ZAxis,
 } from "recharts";
 import axios from "axios";
@@ -19,6 +19,16 @@ const AQI_BANDS = [
   { label: "Hazardous",      min: 301, max: 999, color: "#7f1d1d" },
 ];
 const aqiColor = aqiStandardColor;
+
+const aqiBand = (v) => {
+  if (v == null) return "";
+  if (v <= 50)  return "Good";
+  if (v <= 100) return "Moderate";
+  if (v <= 150) return "Unhealthy (Sensitive)";
+  if (v <= 200) return "Unhealthy";
+  if (v <= 300) return "Very Unhealthy";
+  return "Hazardous";
+};
 
 const dotRadius = (metric, v) => {
   if (v == null) return 5;
@@ -82,12 +92,18 @@ const smartPos = (x, y, W, H) => {
 };
 
 // ── City popup ────────────────────────────────────────────────────────────────
-function CityPopup({ city, pos, W, onClose, onViewTrend, theme }) {
-  const c = theme.colors, mono = theme.typography.fontFamilyMono, pw = 230;
-  const left = pos.x + pw + 20 > W ? pos.x - pw - 14 : pos.x + 14;
+const PW = 240, PH = 340;
+function CityPopup({ city, pos, W, H, onClose, onViewTrend, theme, timeWindow }) {
+  const c = theme.colors, mono = theme.typography.fontFamilyMono;
+  const left = pos.x + PW + 14 > W ? Math.max(4, pos.x - PW - 14) : pos.x + 14;
+  let   top  = pos.y - 70;
+  if (top + PH > (H ?? 800) - 8) top = Math.max(44, (H ?? 800) - PH - 8);
+  top = Math.max(44, top);
+
+  const aColor = aqiColor(city.us_aqi);
+  const countryLabel = getCountryName(city.country);
   const rows = [
-    ["US AQI", city.us_aqi, "", true],
-    ["EU AQI", city.european_aqi, "", false],
+    ["EU AQI", city.european_aqi?.toFixed(0), "", false],
     ["PM2.5",  city.pm2_5?.toFixed(1), "μg/m³", false],
     ["PM10",   city.pm10?.toFixed(1),  "μg/m³", false],
     ["NO₂",    city.nitrogen_dioxide?.toFixed(1), "μg/m³", false],
@@ -96,25 +112,57 @@ function CityPopup({ city, pos, W, onClose, onViewTrend, theme }) {
     ["Dust",   city.dust?.toFixed(1),  "μg/m³", false],
     ["UV",     city.uv_index?.toFixed(1), "", false],
   ].filter(([, v]) => v != null && v !== "null");
+
   return (
     <div onClick={(e) => e.stopPropagation()} style={{
-      position: "absolute", left, top: Math.max(8, pos.y - 60), zIndex: 50,
-      background: c.panel, border: `1px solid ${c.border}`, borderRadius: theme.shape.cardRadius,
-      padding: "12px 14px", width: pw, boxShadow: "0 8px 32px rgba(0,0,0,0.5)",
+      position: "absolute", left, top, zIndex: 50,
+      background: c.panel, border: `1px solid ${c.border}`,
+      borderTop: `2px solid ${aColor}`,
+      borderRadius: theme.shape.cardRadius,
+      padding: "12px 14px", width: PW,
+      boxShadow: "0 8px 32px rgba(0,0,0,0.5)",
+      fontFamily: mono,
     }}>
-      <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 8 }}>
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: 6 }}>
         <div>
-          <div style={{ fontFamily: mono, fontSize: 13, fontWeight: 700, color: c.text }}>{city.location}</div>
-          <div style={{ fontFamily: mono, fontSize: 10, color: c.textSubtle }}>
-            {[city.province, city.country].filter(Boolean).join(" · ")}
+          <div style={{ display:"flex", alignItems:"baseline", gap:6 }}>
+            <span style={{ fontSize: 13, fontWeight: 700, color: c.text, lineHeight: 1.2 }}>
+              {city.location}
+            </span>
+            {countryLabel && (
+              <span style={{ fontSize: 10, color: c.textSubtle }}>{countryLabel}</span>
+            )}
           </div>
+          {city.province && city.province !== city.location && (
+            <div style={{ fontSize: 9, color: c.textSubtle, marginTop: 1, opacity: 0.8 }}>{city.province}</div>
+          )}
+          {timeWindow && timeWindow !== "live" && (
+            <div style={{ display:"inline-flex", alignItems:"center", gap:4, marginTop:4,
+              background:`${c.accent}18`, border:`1px solid ${c.accent}44`,
+              borderRadius:3, padding:"2px 6px",
+              fontFamily:mono, fontSize:8, color:c.accent, letterSpacing:"0.08em" }}>
+              ↩ {TIME_WINDOW_LABELS[timeWindow] ?? timeWindow} avg
+            </div>
+          )}
         </div>
-        <button onClick={onClose} style={{ background: "none", border: "none", color: c.textMuted, fontSize: 18, cursor: "pointer", alignSelf: "flex-start" }}>×</button>
+        <button onClick={onClose} style={{ background: "none", border: "none", color: c.textMuted, fontSize: 18, cursor: "pointer", flexShrink: 0, marginLeft: 8 }}>×</button>
       </div>
-      {rows.map(([label, val, unit, bold]) => (
-        <div key={label} style={{ display: "flex", justifyContent: "space-between", padding: "3px 0", borderBottom: `1px solid ${c.border}`, fontFamily: mono, fontSize: 11 }}>
+      <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 8,
+        background: `${aColor}18`, border: `1px solid ${aColor}44`,
+        borderRadius: 4, padding: "5px 9px" }}>
+        <div style={{ width: 7, height: 7, borderRadius: "50%", background: aColor, flexShrink: 0 }} />
+        <span style={{ fontSize: 12, fontWeight: 700, color: aColor }}>
+          US AQI {city.us_aqi ?? "—"}
+        </span>
+        <span style={{ fontSize: 10, color: aColor, opacity: 0.8 }}>
+          · {aqiBand(city.us_aqi)}
+        </span>
+      </div>
+      {rows.map(([label, val, unit]) => (
+        <div key={label} style={{ display: "flex", justifyContent: "space-between",
+          padding: "3px 0", borderBottom: `1px solid ${c.border}`, fontSize: 11 }}>
           <span style={{ color: c.textMuted }}>{label}</span>
-          <span style={{ fontWeight: bold ? 700 : 400, color: bold ? aqiColor(city.us_aqi) : c.text }}>{val} {unit}</span>
+          <span style={{ color: c.text }}>{val} {unit}</span>
         </div>
       ))}
       <button onClick={() => onViewTrend(city)} style={{
@@ -176,13 +224,14 @@ function TrendPanel({ city, metric, metricMeta, onClose, theme }) {
 }
 
 // ── Hover tooltip ─────────────────────────────────────────────────────────────
-function HoverTooltip({ info, W, H, theme, metric, colormap }) {
+function HoverTooltip({ info, W, H, theme, metric, colormap, timeWindow }) {
   const c = theme.colors, mono = theme.typography.fontFamilyMono;
   const { city, x, y } = info;
   const factors = getFactors(city);
   const metricVal = city[metric] ?? city.us_aqi;
   const aColor = getMetricColor(metric ?? "us_aqi", metricVal, colormap ?? "aqi");
   const { left, top } = smartPos(x, y, W, H);
+  const countryLabel = getCountryName(city.country);
   return (
     <div style={{
       position: "absolute", left, top, zIndex: 30, pointerEvents: "none",
@@ -190,13 +239,28 @@ function HoverTooltip({ info, W, H, theme, metric, colormap }) {
       borderRadius: theme.shape.cardRadius, padding: "10px 13px", width: TW,
       backdropFilter: "blur(12px)", boxShadow: "0 4px 24px rgba(0,0,0,0.4)", fontFamily: mono,
     }}>
-      <div style={{ fontSize: 13, fontWeight: 700, color: c.text }}>{city.location}</div>
-      <div style={{ fontSize: 10, color: c.textSubtle, marginTop: 2 }}>
-        {[city.province, city.country].filter(Boolean).join(" · ")}
+      <div style={{ display: "flex", alignItems: "baseline", gap: 6, flexWrap: "wrap" }}>
+        <span style={{ fontSize: 13, fontWeight: 700, color: c.text }}>{city.location}</span>
+        {countryLabel && (
+          <span style={{ fontSize: 10, color: c.textSubtle }}>{countryLabel}</span>
+        )}
       </div>
-      <div style={{ display: "inline-flex", alignItems: "center", gap: 6, marginTop: 7, marginBottom: 8, background: `${aColor}1a`, border: `1px solid ${aColor}55`, borderRadius: 4, padding: "3px 8px" }}>
-        <div style={{ width: 6, height: 6, borderRadius: "50%", background: aColor }} />
-        <span style={{ fontSize: 11, fontWeight: 700, color: aColor }}>US AQI {city.us_aqi ?? "—"}</span>
+      {timeWindow && timeWindow !== "live" && (
+        <div style={{ display:"inline-flex", alignItems:"center", gap:4, marginTop:4,
+          background:`${c.accent}18`, border:`1px solid ${c.accent}44`,
+          borderRadius:3, padding:"2px 6px",
+          fontFamily:mono, fontSize:8, color:c.accent, letterSpacing:"0.08em" }}>
+          ↩ {TIME_WINDOW_LABELS[timeWindow] ?? timeWindow} avg
+        </div>
+      )}
+      <div style={{ display: "inline-flex", alignItems: "center", gap: 6,
+        marginTop: 7, marginBottom: 8,
+        background: `${aColor}1a`, border: `1px solid ${aColor}55`, borderRadius: 4, padding: "3px 8px" }}>
+        <div style={{ width: 6, height: 6, borderRadius: "50%", background: aColor, flexShrink: 0 }} />
+        <span style={{ fontSize: 11, fontWeight: 700, color: aColor }}>
+          US AQI {city.us_aqi ?? "—"}
+        </span>
+        <span style={{ fontSize: 9, color: aColor, opacity: 0.8 }}>· {aqiBand(city.us_aqi)}</span>
       </div>
       {factors.length > 0 && (
         <>
@@ -285,50 +349,141 @@ function ChartsView({ data, filters, metricMeta, theme, colormap, active, chartT
   const m = metricMeta?.[filters.metric] ?? { label: "US AQI", unit: "" };
 
   // Line chart state — city selector + trend fetch
-  const [lineCity, setLineCity]   = useState(null);
-  const [lineTrend, setLineTrend] = useState([]);
-  const [lineLoading, setLineLoading] = useState(false);
+  const [lineCity, setLineCity]         = useState(null);
+  const [lineTrend, setLineTrend]       = useState([]);
+  const [lineLoading, setLineLoading]   = useState(false);
+  // Trend granularity: "city" | "country" | "region"
+  const [trendGranularity, setTrendGranularity] = useState("city");
+  const [trendCountry, setTrendCountry]   = useState(null);
+  const [trendRegion, setTrendRegion]     = useState(null);
+  const [trendLabel, setTrendLabel]       = useState(""); // display label for aggregated trends
+  // Scatter outlier states
+  const [hideOutliers, setHideOutliers] = useState(false);
+  const [viewOutliers, setViewOutliers] = useState(false);
+  const [outlierView,  setOutlierView]  = useState("bar"); // "bar" | "scatter"
 
   // Auto-select top city when entering line view
   useEffect(() => {
-    if (chartType === "line" && data?.length > 0 && !lineCity) {
+    if (chartType === "line" && data?.length > 0) {
       const sorted = [...data].sort((a, b) => (b[filters.metric] ?? 0) - (a[filters.metric] ?? 0));
-      setLineCity(sorted[0]?.location ?? null);
+      if (trendGranularity === "city" && !lineCity) {
+        setLineCity(sorted[0]?.location ?? null);
+      }
+      if (trendGranularity === "country" && !trendCountry) {
+        const countries = [...new Set(data.map(d => d.country).filter(Boolean))].sort();
+        setTrendCountry(countries[0] ?? null);
+      }
+      if (trendGranularity === "region" && !trendRegion) {
+        const regions = [...new Set(data.map(d => d.region).filter(Boolean))].sort();
+        setTrendRegion(regions[0] ?? null);
+      }
     }
-  }, [chartType, data]);
+  }, [chartType, data, trendGranularity]);
 
-  // Reset lineCity when metric changes so the auto-select re-fires
+  // Reset selections when granularity switches
   useEffect(() => {
-    if (chartType === "line") setLineCity(null);
+    setLineCity(null); setTrendCountry(null); setTrendRegion(null); setLineTrend([]);
+  }, [trendGranularity]);
+
+  // Reset lineCity when metric changes
+  useEffect(() => {
+    if (chartType === "line") { setLineCity(null); setLineTrend([]); }
   }, [filters.metric]);
 
-  // Fetch trend for selected city + metric
+  // Fetch trend — all three granularities
   useEffect(() => {
-    if (!lineCity || chartType !== "line") return;
-    setLineLoading(true);
-    axios.get("/api/trend", { params: { city: lineCity, metric: filters.metric } })
-      .then((r) => setLineTrend(r.data))
-      .catch(console.error)
-      .finally(() => setLineLoading(false));
-  }, [lineCity, filters.metric]);
+    if (chartType !== "line") return;
+    const metric = filters.metric;
+
+    const fetchCities = async (cities) => {
+      const top = cities.slice(0, 3);
+      const results = await Promise.all(
+        top.map(c => axios.get("/api/trend", { params: { city: c.location, metric } }).then(r => r.data).catch(() => []))
+      );
+      const dateMap = {};
+      results.forEach(trend => {
+        trend.forEach(pt => {
+          if (!dateMap[pt.date]) dateMap[pt.date] = { date: pt.date, vals: [] };
+          const v = pt[metric];
+          if (v != null) dateMap[pt.date].vals.push(v);
+        });
+      });
+      return Object.values(dateMap)
+        .map(({ date, vals }) => ({ date, [metric]: vals.length ? vals.reduce((a,b)=>a+b,0)/vals.length : null }))
+        .filter(d => d[metric] != null)
+        .sort((a, b) => a.date.localeCompare(b.date));
+    };
+
+    if (trendGranularity === "city") {
+      if (!lineCity) return;
+      setLineLoading(true);
+      axios.get("/api/trend", { params: { city: lineCity, metric } })
+        .then(r => { setLineTrend(r.data); setTrendLabel(lineCity); })
+        .catch(console.error).finally(() => setLineLoading(false));
+
+    } else if (trendGranularity === "country") {
+      if (!trendCountry) return;
+      const cities = (data || []).filter(d => d.country === trendCountry)
+        .sort((a,b) => (b[metric]??0)-(a[metric]??0));
+      if (!cities.length) return;
+      setLineLoading(true);
+      fetchCities(cities).then(trend => {
+        setLineTrend(trend);
+        setTrendLabel(`${trendCountry} avg (top ${Math.min(3,cities.length)} cities)`);
+      }).catch(console.error).finally(() => setLineLoading(false));
+
+    } else if (trendGranularity === "region") {
+      if (!trendRegion) return;
+      const cities = (data || []).filter(d => d.region === trendRegion)
+        .sort((a,b) => (b[metric]??0)-(a[metric]??0));
+      if (!cities.length) return;
+      setLineLoading(true);
+      fetchCities(cities).then(trend => {
+        setLineTrend(trend);
+        setTrendLabel(`${trendRegion} avg (top ${Math.min(3,cities.length)} cities)`);
+      }).catch(console.error).finally(() => setLineLoading(false));
+    }
+  }, [lineCity, trendCountry, trendRegion, trendGranularity, filters.metric, chartType]);
+
+  // Deduplicate by location — historical/snapshot data can have multiple rows per city
+  // Data arrives sorted by metric DESC from backend so first occurrence = best value
+  const dedupedData = (() => {
+    const seen = new Set();
+    return (data || []).filter((d) => {
+      if (seen.has(d.location)) return false;
+      seen.add(d.location);
+      return true;
+    });
+  })();
 
   // Bar data — top 30 by active metric
-  const barData = [...(data || [])].filter((d) => d[filters.metric] != null)
+  const barData = dedupedData.filter((d) => d[filters.metric] != null)
     .sort((a, b) => (b[filters.metric] ?? 0) - (a[filters.metric] ?? 0))
     .slice(0, 30)
     .map((d) => ({ name: d.location, value: d[filters.metric], aqi: d.us_aqi }));
 
   // Scatter data — AQI vs PM2.5, bubble = population
-  const scatterData = (data || []).filter((d) => d.us_aqi != null && d.pm2_5 != null).map((d) => ({
+  const scatterData = dedupedData.filter((d) => d.us_aqi != null && d.pm2_5 != null).map((d) => ({
     x: d.us_aqi,
     y: d.pm2_5,
     z: Math.max(6, Math.min(22, (d.population || 1e6) / 400000)),
     name: d.location,
     country: d.country,
+    population: d.population || 0,
   }));
 
+  // IQR outlier filter (1.5 × IQR fence on X axis)
+  const filteredScatterData = (() => {
+    if (!hideOutliers || scatterData.length < 4) return scatterData;
+    const xs = scatterData.map((d) => d.x).sort((a, b) => a - b);
+    const q1 = xs[Math.floor(xs.length * 0.25)];
+    const q3 = xs[Math.floor(xs.length * 0.75)];
+    const iqr = q3 - q1;
+    return scatterData.filter((d) => d.x >= q1 - 1.5 * iqr && d.x <= q3 + 1.5 * iqr);
+  })();
+
   // Heatmap rows — top 20 cities by active metric
-  const hmCities = [...(data || [])].filter((d) => d[filters.metric] != null)
+  const hmCities = dedupedData.filter((d) => d[filters.metric] != null)
     .sort((a, b) => (b[filters.metric] ?? 0) - (a[filters.metric] ?? 0))
     .slice(0, 20);
 
@@ -365,9 +520,9 @@ function ChartsView({ data, filters, metricMeta, theme, colormap, active, chartT
             </button>
           );
         })}
-        <div style={{ marginLeft: "auto", display: "flex", alignItems: "center",
-          fontFamily: mono, fontSize: 9, color: c.textSubtle, letterSpacing: "0.1em", paddingRight: 16 }}>
-          {m.label}{m.unit ? ` (${m.unit})` : ""} · {(data || []).length} CITIES
+        <div style={{ marginLeft: "auto", display: "flex", alignItems: "center", gap: 12,
+          fontFamily: mono, fontSize: 9, color: c.textSubtle, letterSpacing: "0.1em", paddingRight: 12 }}>
+          <span>{m.label}{m.unit ? ` (${m.unit})` : ""} · {(data || []).length} CITIES</span>
         </div>
       </div>
 
@@ -380,15 +535,23 @@ function ChartsView({ data, filters, metricMeta, theme, colormap, active, chartT
           </div>
           <div style={{ height: "calc(100% - 36px)" }}>
             <ResponsiveContainer width="100%" height="100%">
-              <BarChart data={barData} layout="vertical" margin={{ top: 0, right: 60, left: 90, bottom: 0 }}>
+              <BarChart data={barData} layout="vertical" margin={{ top: 0, right: 60, left: 120, bottom: 0 }}>
                 <XAxis type="number" tick={{ fill: c.textSubtle, fontSize: 9, fontFamily: mono }}
                   axisLine={{ stroke: c.border }} tickLine={false} />
-                <YAxis type="category" dataKey="name" width={90}
-                  tick={{ fill: c.textMuted, fontSize: 10, fontFamily: mono }}
-                  axisLine={false} tickLine={false} />
+                <YAxis
+                  type="category" dataKey="name" width={120}
+                  axisLine={false} tickLine={false} interval={0}
+                  tick={({ x, y, payload }) => (
+                    <text x={x - 6} y={y} textAnchor="end" dominantBaseline="central"
+                      fill={c.textMuted} fontSize={10} fontFamily={mono}>
+                      {payload.value}
+                    </text>
+                  )}
+                />
                 <Tooltip
-                  contentStyle={{ background: c.surface, border: `1px solid ${c.border}`, borderRadius: 6, fontFamily: mono, fontSize: 11 }}
+                  contentStyle={{ background: c.panel, border: `1px solid ${c.border}`, borderRadius: 6, fontFamily: mono, fontSize: 11, color: c.text }}
                   labelStyle={{ color: c.text, fontWeight: 700 }}
+                  itemStyle={{ color: c.text }}
                   formatter={(v) => [v?.toFixed(1), m.label]} />
                 <Bar dataKey="value" radius={[0, 3, 3, 0]}>
                   {barData.map((e, i) => (
@@ -401,39 +564,86 @@ function ChartsView({ data, filters, metricMeta, theme, colormap, active, chartT
         </div>
       )}
 
-      {/* ── LINE: time-series trend for a city ── */}
+      {/* ── LINE: time-series trend ── */}
       {chartType === "line" && (
         <div style={{ flex: 1, minHeight: 0, display: "flex", flexDirection: "column" }}>
-          <div style={{ padding: "10px 16px 0", display: "flex", alignItems: "center", gap: 10, flexShrink: 0 }}>
-            <div style={{ fontFamily: mono, fontSize: 9, color: c.textSubtle,
-              letterSpacing: "0.12em", textTransform: "uppercase" }}>City</div>
-            <select
-              value={lineCity ?? ""}
-              onChange={(e) => setLineCity(e.target.value)}
-              style={{
-                padding: "5px 10px", background: c.inputBg ?? c.surface,
-                border: `1px solid ${c.inputBorder ?? c.border}`,
-                borderRadius: 4, color: c.text, fontFamily: mono, fontSize: 11,
-                cursor: "pointer", outline: "none", minWidth: 200,
-              }}>
-              {sortedCities.slice(0, 60).map((city) => (
-                <option key={city.location} value={city.location}>{city.location}</option>
-              ))}
-            </select>
+          {/* Controls row */}
+          <div style={{ padding: "10px 16px 0", display: "flex", alignItems: "center", gap: 8, flexShrink: 0, flexWrap: "wrap" }}>
+            {/* Granularity pill */}
+            <div style={{ display:"flex", background:c.surface, border:`1px solid ${c.border}`,
+              borderRadius:theme.shape?.buttonRadius??4, overflow:"hidden" }}>
+              {[
+                { id:"city",    label:"City"    },
+                { id:"country", label:"Country" },
+                { id:"region",  label:"Region"  },
+              ].map(opt => {
+                const active = trendGranularity === opt.id;
+                return (
+                  <button key={opt.id} onClick={() => setTrendGranularity(opt.id)} style={{
+                    padding:"5px 10px", border:"none", borderRadius:0,
+                    background: active ? c.accent : "transparent",
+                    color: active ? (c.accentFg ?? "#fff") : c.textMuted,
+                    fontFamily: mono, fontSize: 9, cursor:"pointer",
+                    letterSpacing:"0.08em", textTransform:"uppercase",
+                    transition:"all 0.15s", fontWeight: active ? 700 : 400,
+                  }}>{opt.label}</button>
+                );
+              })}
+            </div>
+
+            {/* Selection dropdown — changes based on granularity */}
+            {trendGranularity === "city" && (
+              <select value={lineCity ?? ""} onChange={(e) => setLineCity(e.target.value)}
+                style={{ padding:"5px 10px", background:c.inputBg??c.surface,
+                  border:`1px solid ${c.inputBorder??c.border}`,
+                  borderRadius:4, color:c.text, fontFamily:mono, fontSize:11,
+                  cursor:"pointer", outline:"none", minWidth:200 }}>
+                {sortedCities.slice(0, 60).map(city => (
+                  <option key={city.location} value={city.location}>{city.location}</option>
+                ))}
+              </select>
+            )}
+            {trendGranularity === "country" && (
+              <select value={trendCountry ?? ""} onChange={(e) => setTrendCountry(e.target.value)}
+                style={{ padding:"5px 10px", background:c.inputBg??c.surface,
+                  border:`1px solid ${c.inputBorder??c.border}`,
+                  borderRadius:4, color:c.text, fontFamily:mono, fontSize:11,
+                  cursor:"pointer", outline:"none", minWidth:180 }}>
+                {[...new Set((data||[]).map(d=>d.country).filter(Boolean))].sort().map(cn => (
+                  <option key={cn} value={cn}>{getCountryName(cn)}</option>
+                ))}
+              </select>
+            )}
+            {trendGranularity === "region" && (
+              <select value={trendRegion ?? ""} onChange={(e) => setTrendRegion(e.target.value)}
+                style={{ padding:"5px 10px", background:c.inputBg??c.surface,
+                  border:`1px solid ${c.inputBorder??c.border}`,
+                  borderRadius:4, color:c.text, fontFamily:mono, fontSize:11,
+                  cursor:"pointer", outline:"none", minWidth:160 }}>
+                {[...new Set((data||[]).map(d=>d.region).filter(Boolean))].sort().map(r => (
+                  <option key={r} value={r}>{r}</option>
+                ))}
+              </select>
+            )}
+
             {lineTrend.length > 0 && !lineLoading && (
-              <div style={{ fontFamily: mono, fontSize: 9, color: c.textSubtle }}>
-                {lineTrend.length} data points · 2023–present
+              <div style={{ fontFamily:mono, fontSize:9, color:c.textSubtle, marginLeft:4 }}>
+                {lineTrend.length} pts · 2023–present
+                {trendLabel && trendGranularity !== "city" && (
+                  <span style={{ color:c.accent }}> · avg</span>
+                )}
               </div>
             )}
           </div>
+
           <div style={{ flex: 1, minHeight: 0, padding: "8px 16px 16px 4px" }}>
             {lineLoading ? (
-              <div style={{ height: "100%", display: "flex", alignItems: "center", justifyContent: "center",
-                fontFamily: mono, fontSize: 11, color: c.textMuted }}>Loading trend data…</div>
+              <div style={{ height:"100%", display:"flex", alignItems:"center", justifyContent:"center",
+                fontFamily:mono, fontSize:11, color:c.textMuted }}>Loading trend data…</div>
             ) : lineTrend.length === 0 ? (
-              <div style={{ height: "100%", display: "flex", alignItems: "center", justifyContent: "center",
-                fontFamily: mono, fontSize: 11, color: c.textSubtle }}>
-                Select a city to view its {m.label} trend
+              <div style={{ height:"100%", display:"flex", alignItems:"center", justifyContent:"center",
+                fontFamily:mono, fontSize:11, color:c.textSubtle }}>
+                Select a {trendGranularity} to view its {m.label} trend
               </div>
             ) : (
               <ResponsiveContainer width="100%" height="100%">
@@ -460,58 +670,201 @@ function ChartsView({ data, filters, metricMeta, theme, colormap, active, chartT
       {/* ── SCATTER: AQI vs PM2.5, bubble = population ── */}
       {chartType === "scatter" && (
         <div style={{ flex: 1, minHeight: 0, display: "flex", flexDirection: "column" }}>
-          <div style={{ padding: "10px 16px 0", fontFamily: mono, fontSize: 9,
-            color: c.textSubtle, letterSpacing: "0.12em", textTransform: "uppercase", flexShrink: 0 }}>
-            US AQI vs PM2.5 · bubble size = population
-          </div>
-          <div style={{ flex: 1, minHeight: 0 }}>
-            {scatterData.length === 0 ? (
-              <div style={{ height: "100%", display: "flex", alignItems: "center", justifyContent: "center",
-                fontFamily: mono, fontSize: 11, color: c.textSubtle }}>No data with both AQI + PM2.5</div>
+          <div style={{ padding: "10px 16px 0", display: "flex", alignItems: "center", gap: 8, flexShrink: 0 }}>
+            {viewOutliers ? (
+              <>
+                <button onClick={() => setViewOutliers(false)} style={{
+                  padding:"4px 10px", background:c.surface,
+                  border:`1px solid ${c.border}`, borderRadius:theme.shape?.buttonRadius??4,
+                  color:c.textMuted, fontFamily:mono, fontSize:9, cursor:"pointer",
+                  letterSpacing:"0.08em", textTransform:"uppercase",
+                }}>← Scatter</button>
+                {/* Bar / Scatter toggle for outlier view */}
+                <div style={{ display:"flex", background:c.surface, border:`1px solid ${c.border}`,
+                  borderRadius:theme.shape?.buttonRadius??4, overflow:"hidden" }}>
+                  {[{id:"bar",label:"Bar"},{id:"scatter",label:"Scatter"}].map(opt => {
+                    const active = outlierView === opt.id;
+                    return (
+                      <button key={opt.id} onClick={() => setOutlierView(opt.id)} style={{
+                        padding:"4px 10px", border:"none", borderRadius:0,
+                        background: active ? c.accent : "transparent",
+                        color: active ? (c.accentFg??"#fff") : c.textMuted,
+                        fontFamily:mono, fontSize:9, cursor:"pointer",
+                        letterSpacing:"0.08em", textTransform:"uppercase",
+                        transition:"all 0.15s",
+                      }}>{opt.label}</button>
+                    );
+                  })}
+                </div>
+              </>
             ) : (
-              <ResponsiveContainer width="100%" height="100%">
-                <ScatterChart margin={{ top: 16, right: 24, bottom: 36, left: 16 }}>
-                  <XAxis type="number" dataKey="x" name="US AQI"
-                    label={{ value: "US AQI", position: "insideBottom", offset: -8,
-                      fill: c.textSubtle, fontFamily: mono, fontSize: 9 }}
-                    tick={{ fill: c.textSubtle, fontSize: 9, fontFamily: mono }}
-                    axisLine={{ stroke: c.border }} tickLine={false} />
-                  <YAxis type="number" dataKey="y" name="PM2.5"
-                    label={{ value: "PM2.5 μg/m³", angle: -90, position: "insideLeft", offset: 12,
-                      fill: c.textSubtle, fontFamily: mono, fontSize: 9 }}
-                    tick={{ fill: c.textSubtle, fontSize: 9, fontFamily: mono }}
-                    axisLine={{ stroke: c.border }} tickLine={false} width={44} />
-                  <ZAxis type="number" dataKey="z" range={[30, 600]} />
-                  <Tooltip
-                    cursor={{ strokeDasharray: "3 3", stroke: c.border }}
-                    content={({ active: a, payload: p }) => {
-                      if (!a || !p?.[0]) return null;
-                      const d = p[0].payload;
-                      return (
-                        <div style={{ background: c.panel, border: `1px solid ${c.border}`,
-                          borderRadius: 6, padding: "8px 12px", fontFamily: mono, fontSize: 10 }}>
-                          <div style={{ fontWeight: 700, color: c.text, marginBottom: 4 }}>{d.name}</div>
-                          <div style={{ color: c.textMuted }}>
-                            AQI: <span style={{ color: aqiColor(d.x) }}>{d.x}</span>
+              <div style={{ fontFamily:mono, fontSize:9,
+                color:c.textSubtle, letterSpacing:"0.12em", textTransform:"uppercase" }}>
+                US AQI vs PM2.5 · bubble = population · color = AQI band
+              </div>
+            )}
+            <div style={{ marginLeft:"auto", display:"flex", alignItems:"center", gap:6 }}>
+              {hideOutliers && scatterData.length !== filteredScatterData.length && (
+                <>
+                  <span style={{ fontFamily:mono, fontSize:9, color:c.textSubtle }}>
+                    {scatterData.length - filteredScatterData.length} hidden
+                  </span>
+                  <button onClick={() => { setViewOutliers(true); setHideOutliers(true); }} style={{
+                    padding:"4px 10px",
+                    background: viewOutliers ? c.accentSubtle : c.surface,
+                    border:`1px solid ${viewOutliers ? c.accent : c.border}`,
+                    borderRadius:theme.shape?.buttonRadius??4,
+                    color: viewOutliers ? c.accent : c.textMuted,
+                    fontFamily:mono, fontSize:9, cursor:"pointer",
+                    letterSpacing:"0.08em", textTransform:"uppercase",
+                    transition:"all 0.15s",
+                  }}>Compare Outliers</button>
+                </>
+              )}
+              <button onClick={() => { setHideOutliers(v=>!v); setViewOutliers(false); }} style={{
+                padding:"4px 10px",
+                background: hideOutliers ? c.accentSubtle : c.surface,
+                border:`1px solid ${hideOutliers ? c.accent : c.border}`,
+                borderRadius:theme.shape?.buttonRadius??4,
+                color: hideOutliers ? c.accent : c.textMuted,
+                fontFamily:mono, fontSize:9, cursor:"pointer",
+                letterSpacing:"0.08em", textTransform:"uppercase",
+                transition:"all 0.15s",
+              }}>
+                {hideOutliers ? "Show All" : "Hide Outliers"}
+              </button>
+            </div>
+          </div>
+
+          <div style={{ flex:1, minHeight:0 }}>
+            {/* Outlier comparison views */}
+            {viewOutliers && hideOutliers ? (() => {
+              const outlierData = scatterData
+                .filter(d => !filteredScatterData.some(f => f.name === d.name))
+                .sort((a,b) => b.x - a.x);
+              if (outlierData.length === 0) return (
+                <div style={{ height:"100%", display:"flex", alignItems:"center", justifyContent:"center",
+                  fontFamily:mono, fontSize:11, color:c.textSubtle }}>No outliers detected</div>
+              );
+              const barOutliers = outlierData.map(d => ({ name:d.name, value:d.x, pm25:d.y }));
+              return (
+                <div style={{ height:"100%", display:"flex", flexDirection:"column" }}>
+                  <div style={{ fontFamily:mono, fontSize:9, color:c.textSubtle,
+                    letterSpacing:"0.12em", textTransform:"uppercase", padding:"8px 16px 0" }}>
+                    {outlierData.length} outlier {outlierData.length===1?"city":"cities"} · IQR method
+                  </div>
+                  <div style={{ flex:1, padding:"4px 8px 16px" }}>
+                    {outlierView === "bar" ? (
+                      <ResponsiveContainer width="100%" height="100%">
+                        <BarChart data={barOutliers} layout="vertical" margin={{top:0,right:60,left:120,bottom:0}}>
+                          <XAxis type="number" tick={{fill:c.textSubtle,fontSize:9,fontFamily:mono}}
+                            axisLine={{stroke:c.border}} tickLine={false}/>
+                          <YAxis type="category" dataKey="name" width={120} axisLine={false} tickLine={false} interval={0}
+                            tick={({x,y,payload}) => (
+                              <text x={x-6} y={y} textAnchor="end" dominantBaseline="central"
+                                fill={c.textMuted} fontSize={10} fontFamily={mono}>{payload.value}</text>
+                            )}
+                          />
+                          <Tooltip contentStyle={{background:c.panel,border:`1px solid ${c.border}`,borderRadius:6,fontFamily:mono,fontSize:11,color:c.text}}
+                            labelStyle={{color:c.text,fontWeight:700}} itemStyle={{color:c.text}}
+                            formatter={(v) => [v?.toFixed(1),"US AQI"]}/>
+                          <Bar dataKey="value" radius={[0,3,3,0]}>
+                            {barOutliers.map((e,i) => <Cell key={i} fill={aqiColor(e.value)} opacity={0.85}/>)}
+                          </Bar>
+                        </BarChart>
+                      </ResponsiveContainer>
+                    ) : (
+                      <ResponsiveContainer width="100%" height="100%">
+                        <ScatterChart margin={{top:16,right:32,bottom:40,left:16}}>
+                          <CartesianGrid strokeDasharray="3 3" stroke={c.border} opacity={0.5}/>
+                          <XAxis type="number" dataKey="x" name="US AQI"
+                            label={{value:"US AQI",position:"insideBottom",offset:-12,fill:c.textSubtle,fontFamily:mono,fontSize:9}}
+                            tick={{fill:c.textSubtle,fontSize:9,fontFamily:mono}} axisLine={{stroke:c.border}} tickLine={false}/>
+                          <YAxis type="number" dataKey="y" name="PM2.5"
+                            label={{value:"PM2.5",angle:-90,position:"insideLeft",offset:14,fill:c.textSubtle,fontFamily:mono,fontSize:9}}
+                            tick={{fill:c.textSubtle,fontSize:9,fontFamily:mono}} axisLine={{stroke:c.border}} tickLine={false} width={44}/>
+                          <ZAxis type="number" dataKey="z" range={[40,500]}/>
+                          <Tooltip cursor={{strokeDasharray:"4 4",stroke:c.border}}
+                            content={({active:a,payload:p}) => {
+                              if (!a||!p?.[0]) return null;
+                              const d=p[0].payload, col=aqiColor(d.x);
+                              return (
+                                <div style={{background:c.panel,border:`1px solid ${c.border}`,borderTop:`3px solid ${col}`,borderRadius:6,padding:"8px 12px",fontFamily:mono,fontSize:10}}>
+                                  <div style={{fontWeight:700,color:c.text,marginBottom:4}}>{d.name}</div>
+                                  <div style={{color:c.textMuted}}>AQI: <span style={{color:col,fontWeight:700}}>{d.x}</span> <span style={{fontSize:9,opacity:0.8}}>· {aqiBand(d.x)}</span></div>
+                                  <div style={{color:c.textMuted}}>PM2.5: <span style={{color:c.text}}>{d.y?.toFixed(1)} μg/m³</span></div>
+                                </div>
+                              );
+                            }}/>
+                          <Scatter data={outlierData}
+                            shape={(props) => {
+                              const {cx,cy,r,payload}=props, col=aqiColor(payload.x);
+                              return <circle cx={cx} cy={cy} r={Math.max(4,r??6)} fill={`${col}99`} stroke={col} strokeWidth={1.5}/>;
+                            }}/>
+                        </ScatterChart>
+                      </ResponsiveContainer>
+                    )}
+                  </div>
+                </div>
+              );
+            })() : (
+              /* Main scatter chart */
+              filteredScatterData.length === 0 ? (
+                <div style={{ height:"100%", display:"flex", alignItems:"center", justifyContent:"center",
+                  fontFamily:mono, fontSize:11, color:c.textSubtle }}>No data with both AQI + PM2.5</div>
+              ) : (
+                <ResponsiveContainer width="100%" height="100%">
+                  <ScatterChart margin={{ top:16, right:32, bottom:40, left:16 }}>
+                    <CartesianGrid strokeDasharray="3 3" stroke={`${c.border}`} opacity={0.5} />
+                    <XAxis type="number" dataKey="x" name="US AQI"
+                      domain={[0, (dm) => Math.ceil(dm * 1.1 / 50) * 50]}
+                      label={{ value:"US AQI", position:"insideBottom", offset:-12, fill:c.textSubtle, fontFamily:mono, fontSize:9 }}
+                      tick={{ fill:c.textSubtle, fontSize:9, fontFamily:mono }}
+                      axisLine={{ stroke:c.border }} tickLine={false} />
+                    <YAxis type="number" dataKey="y" name="PM2.5"
+                      domain={[0, (dm) => Math.ceil(dm * 1.12 / 20) * 20]}
+                      label={{ value:"PM2.5 (μg/m³)", angle:-90, position:"insideLeft", offset:14, fill:c.textSubtle, fontFamily:mono, fontSize:9 }}
+                      tick={{ fill:c.textSubtle, fontSize:9, fontFamily:mono }}
+                      axisLine={{ stroke:c.border }} tickLine={false} width={44} />
+                    <ZAxis type="number" dataKey="z" range={[40, 700]} />
+                    <Tooltip
+                      cursor={{ strokeDasharray:"4 4", stroke:c.border }}
+                      content={({ active:a, payload:p }) => {
+                        if (!a || !p?.[0]) return null;
+                        const d = p[0].payload;
+                        const dotCol = aqiColor(d.x);
+                        return (
+                          <div style={{ background:c.panel, border:`1px solid ${c.border}`,
+                            borderTop:`3px solid ${dotCol}`, borderRadius:6, padding:"10px 14px",
+                            fontFamily:mono, fontSize:10, minWidth:160, boxShadow:"0 4px 16px rgba(0,0,0,0.4)" }}>
+                            <div style={{ fontWeight:700, color:c.text, marginBottom:6, fontSize:11 }}>{d.name}</div>
+                            <div style={{ color:c.textMuted, marginBottom:2 }}>
+                              AQI: <span style={{ color:dotCol, fontWeight:700, fontSize:12 }}>{d.x}</span>
+                              <span style={{ color:dotCol, opacity:0.8, fontSize:9 }}> · {aqiBand(d.x)}</span>
+                            </div>
+                            <div style={{ color:c.textMuted, marginBottom:2 }}>
+                              PM2.5: <span style={{ color:c.text, fontWeight:600 }}>{d.y?.toFixed(1)} μg/m³</span>
+                            </div>
+                            {d.population > 0 && (
+                              <div style={{ color:c.textMuted }}>Pop: <span style={{ color:c.text }}>{(d.population/1e6).toFixed(1)}M</span></div>
+                            )}
+                            {d.country && (
+                              <div style={{ color:c.textSubtle, marginTop:4, fontSize:9, letterSpacing:"0.08em", textTransform:"uppercase" }}>{d.country}</div>
+                            )}
                           </div>
-                          <div style={{ color: c.textMuted }}>
-                            PM2.5: <span style={{ color: c.text }}>{d.y?.toFixed(1)} μg/m³</span>
-                          </div>
-                          {d.country && (
-                            <div style={{ color: c.textSubtle, marginTop: 2, fontSize: 9 }}>{d.country}</div>
-                          )}
-                        </div>
-                      );
-                    }}
-                  />
-                  <Scatter
-                    data={scatterData}
-                    fill={`${c.accent}88`}
-                    stroke={`${c.accent}cc`}
-                    strokeWidth={0.5}
-                  />
-                </ScatterChart>
-              </ResponsiveContainer>
+                        );
+                      }}
+                    />
+                    <Scatter data={filteredScatterData}
+                      shape={(props) => {
+                        const { cx, cy, r, payload } = props;
+                        const col = aqiColor(payload.x);
+                        return <circle cx={cx} cy={cy} r={Math.max(4,r??6)} fill={`${col}99`} stroke={col} strokeWidth={1.5}/>;
+                      }}
+                    />
+                  </ScatterChart>
+                </ResponsiveContainer>
+              )
             )}
           </div>
         </div>
@@ -582,13 +935,79 @@ function ChartsView({ data, filters, metricMeta, theme, colormap, active, chartT
   );
 }
 
+// ── Country choropleth tooltip ────────────────────────────────────────────────
+function CountryTooltip({ info, W, H, theme, metric, metricMeta, colormap }) {
+  const c = theme.colors, mono = theme.typography.fontFamilyMono;
+  const m = metricMeta?.[metric] ?? { label: "US AQI", unit: "" };
+  const { countryName, avg, cities, cityCount, x, y } = info;
+  const aColor = avg != null ? getMetricColor(metric, avg, colormap) : c.textSubtle;
+  const { left, top } = smartPos(x, y, W, H);
+  return (
+    <div style={{
+      position: "absolute", left, top, zIndex: 28, pointerEvents: "none",
+      background: `${c.panel}f5`, border: `1px solid ${c.border}`, borderTop: `2px solid ${aColor}`,
+      borderRadius: theme.shape.cardRadius, padding: "10px 13px", width: TW,
+      backdropFilter: "blur(12px)", boxShadow: "0 4px 24px rgba(0,0,0,0.4)", fontFamily: mono,
+    }}>
+      <div style={{ fontSize: 13, fontWeight: 700, color: c.text, marginBottom: 1 }}>{countryName}</div>
+      <div style={{ fontSize: 9, color: c.textSubtle, letterSpacing: "0.1em", textTransform: "uppercase", marginBottom: 6 }}>
+        {cityCount} {cityCount === 1 ? "city" : "cities"} monitored
+      </div>
+      {avg != null && (
+        <div style={{ display: "inline-flex", alignItems: "center", gap: 6, marginBottom: 8,
+          background: `${aColor}1a`, border: `1px solid ${aColor}55`, borderRadius: 4, padding: "3px 8px" }}>
+          <div style={{ width: 6, height: 6, borderRadius: "50%", background: aColor, flexShrink: 0 }} />
+          <span style={{ fontSize: 11, fontWeight: 700, color: aColor }}>
+            {m.label} avg {avg.toFixed(1)}
+          </span>
+          {metric === "us_aqi" && (
+            <span style={{ fontSize: 9, color: aColor, opacity: 0.8 }}>· {aqiBand(avg)}</span>
+          )}
+        </div>
+      )}
+      {cities.length > 0 && (
+        <>
+          <div style={{ fontSize: 9, letterSpacing: "0.12em", color: c.textSubtle,
+            textTransform: "uppercase", marginBottom: 5 }}>Top Cities</div>
+          {cities.map((city) => {
+            const val = city[metric] ?? city.us_aqi;
+            const col = val != null ? getMetricColor(metric, val, colormap) : c.textSubtle;
+            return (
+              <div key={city.location} style={{ display: "flex", justifyContent: "space-between",
+                fontSize: 10, padding: "3px 0", borderBottom: `1px solid ${c.border}` }}>
+                <span style={{ color: c.textMuted }}>{city.location}</span>
+                <span style={{ color: col, fontWeight: 600 }}>{val?.toFixed(0)}</span>
+              </div>
+            );
+          })}
+        </>
+      )}
+    </div>
+  );
+}
+
 // ── Module-level GeoJSON cache + constants ────────────────────────────────────
 const COUNTRY_URL  = "https://d2ad6b4ur7yvpq.cloudfront.net/naturalearth-3.3.0/ne_110m_admin_0_countries.geojson";
-const PROVINCE_URL = "https://d2ad6b4ur7yvpq.cloudfront.net/naturalearth-3.3.0/ne_110m_admin_1_states_provinces.geojson";
-let _provinceGeoJson = null;
+let _countryGeoJson = null; // cached to avoid re-fetching on every data update
+
+const TIME_WINDOW_LABELS = {
+  "1d":"1 Day","3d":"3 Days","7d":"7 Days","30d":"30 Days","90d":"90 Days",
+  "6m":"6 Months","1y":"1 Year","2y":"2 Years","3y":"3+ Years",
+};
+
+// ISO 3166-1 alpha-2 → full English country name (browser-native, no lookup table needed)
+let _countryFmt = null;
+const getCountryName = (code) => {
+  if (!code) return code;
+  try {
+    if (!_countryFmt) _countryFmt = new Intl.DisplayNames(["en"], { type: "region" });
+    return _countryFmt.of(code) || code;
+  } catch { return code; }
+};
 
 // Bounding boxes for region fly-to: [[minLng,minLat],[maxLng,maxLat]]
 const REGION_BOUNDS = {
+  "North America":   [[-168,  7],  [-52,  84]],
   "Canada":          [[-141, 41],  [-52,  84]],
   "United States":   [[-127, 24],  [-65,  50]],
   "Central America": [[-92,   7],  [-77,  21]],
@@ -604,15 +1023,20 @@ const REGION_BOUNDS = {
 // ── Main component ────────────────────────────────────────────────────────────
 export default function AirQuality({
   data, loading, filters, metricMeta, theme,
-  viewMode, choropleth, colormap = "aqi",
+  viewMode, choroplethOn = false, colormap = "aqi",
   oceanPreset = "auto", oceanRefreshKey = 0,
-  borderLevel = "country", showCities = true,
-  satellite = false,
+  showCities = true, satellite = false,
   chartType = "bar", onChartType,
+  timeWindow = "live",
+  downloadRef,
 }) {
   const c       = theme.colors;
   const mono    = theme.typography.fontFamilyMono;
   const isLight = !!(theme.meta.tags?.includes("light"));
+
+  // Derive choropleth + border state from single toggle
+  const choropleth  = choroplethOn ? "country" : "none";
+  const borderLevel = choroplethOn ? "country" : "none";
 
   // Satellite replaces the basemap style
   const mapStyle = satellite
@@ -628,7 +1052,6 @@ export default function AirQuality({
   const choroRef    = useRef(choropleth);
   const colormapRef = useRef(colormap);
   const oceanRef    = useRef(oceanPreset);
-  const borderLevelRef = useRef(borderLevel);
   const showCitiesRef  = useRef(showCities);
   const satelliteRef   = useRef(satellite);
   const lastOceanPresetRef    = useRef(oceanPreset);
@@ -637,11 +1060,16 @@ export default function AirQuality({
   const eventsBoundRef    = useRef(false);
   const isLightRef        = useRef(isLight);
   const originalWaterColorsRef = useRef({});
+  // Track city hover state without stale closures (avoids queryRenderedFeatures on every mousemove)
+  const hoverActiveRef    = useRef(false);
+  // Track last hovered country to skip expensive recomputes on intra-country moves
+  const lastHoveredIsoRef = useRef(null);
 
-  const [cSize,     setCSize]     = useState({ w: 1200, h: 700 });
-  const [popup,     setPopup]     = useState(null);
-  const [hover,     setHover]     = useState(null);
-  const [trendCity, setTrendCity] = useState(null);
+  const [cSize,        setCSize]        = useState({ w: 1200, h: 700 });
+  const [popup,        setPopup]        = useState(null);
+  const [hover,        setHover]        = useState(null);
+  const [countryHover, setCountryHover] = useState(null);
+  const [trendCity,    setTrendCity]    = useState(null);
 
   // Track container size
   const containerRef = useRef(null);
@@ -653,13 +1081,13 @@ export default function AirQuality({
   }, []);
 
   // Keep refs current every render
-  bgRef.current          = c.bg;
-  isLightRef.current     = isLight;
-  colormapRef.current    = colormap;
-  oceanRef.current       = oceanPreset;
-  borderLevelRef.current = borderLevel;
-  showCitiesRef.current  = showCities;
-  satelliteRef.current   = satellite;
+  bgRef.current         = c.bg;
+  isLightRef.current    = isLight;
+  colormapRef.current   = colormap;
+  oceanRef.current      = oceanPreset;
+  choroRef.current      = choropleth;
+  showCitiesRef.current = showCities;
+  satelliteRef.current  = satellite;
 
   // ── Layer helpers ──────────────────────────────────────────────────────────
   const applyBg = (map, color) => {
@@ -713,14 +1141,11 @@ export default function AirQuality({
     });
     setDots(map);
     updateCountries(map);
-    setProvinces(map);
+    // Clear any stale hover highlight
+    map.getSource("country-hover")?.setData({ type:"FeatureCollection", features:[] });
     // One idle pass to catch race-y style transitions
     map.once("idle", () => {
-      try {
-        setDots(map);
-        updateCountries(map);
-        setProvinces(map);
-      } catch (_) {}
+      try { setDots(map); updateCountries(map); } catch (_) {}
     });
   };
 
@@ -743,8 +1168,9 @@ export default function AirQuality({
     if (!map.getSource("countries")) {
       map.addSource("countries", { type: "geojson", data: { type: "FeatureCollection", features: [] } });
     }
-    if (!map.getSource("provinces")) {
-      map.addSource("provinces", { type: "geojson", data: { type: "FeatureCollection", features: [] } });
+    // Separate source for hover highlight — always just the hovered feature
+    if (!map.getSource("country-hover")) {
+      map.addSource("country-hover", { type: "geojson", data: { type: "FeatureCollection", features: [] } });
     }
 
     // Country fill — choropleth colors (opacity toggled by updateCountries)
@@ -752,21 +1178,20 @@ export default function AirQuality({
       map.addLayer({ id: "country-fill", type: "fill", source: "countries",
         paint: { "fill-color": ["coalesce", ["get", "fillColor"], "transparent"], "fill-opacity": 0 } });
     }
+    // Country hover highlight — solid fill of choropleth color at higher opacity
+    if (!map.getLayer("country-highlight")) {
+      map.addLayer({ id: "country-highlight", type: "fill", source: "country-hover",
+        paint: {
+          "fill-color": ["coalesce", ["get", "fillColor"], "#888888"],
+          "fill-opacity": 0.38,
+        } });
+    }
     // Country border lines — solid color, opacity toggled by updateCountries
     if (!map.getLayer("country-line")) {
       map.addLayer({ id: "country-line", type: "line", source: "countries",
         paint: {
           "line-color": light ? "rgba(60,60,60,0.55)" : "rgba(210,210,210,0.3)",
           "line-width": 0.8, "line-opacity": 0,
-        } });
-    }
-    // Province / state border lines — toggled by setProvinces
-    if (!map.getLayer("province-line")) {
-      map.addLayer({ id: "province-line", type: "line", source: "provinces",
-        layout: { visibility: "none" },
-        paint: {
-          "line-color": light ? "rgba(60,60,60,0.3)" : "rgba(200,200,200,0.18)",
-          "line-width": 0.5, "line-opacity": 0.7,
         } });
     }
     // City circles
@@ -796,6 +1221,7 @@ export default function AirQuality({
     eventsBoundRef.current = true;
 
     map.on("mouseenter", "cities-dots", (e) => {
+      hoverActiveRef.current = true;
       map.getCanvas().style.cursor = "pointer";
       const city = JSON.parse(e.features[0].properties.cityJson);
       const pt = map.project([city.lon, city.lat]);
@@ -804,6 +1230,7 @@ export default function AirQuality({
       setHover({ city, x: pt.x, y: pt.y });
     });
     map.on("mouseleave", "cities-dots", () => {
+      hoverActiveRef.current = false;
       map.getCanvas().style.cursor = "";
       map.setFilter("cities-hover", ["==", "id", ""]);
       map.setPaintProperty("cities-hover", "circle-stroke-opacity", 0);
@@ -820,6 +1247,59 @@ export default function AirQuality({
       setPopup((p) => { if (!p) return null; const pt = map.project([p.city.lon, p.city.lat]); return { ...p, x: pt.x, y: pt.y }; });
       setHover((p) => { if (!p) return null; const pt = map.project([p.city.lon, p.city.lat]); return { ...p, x: pt.x, y: pt.y }; });
     });
+
+    // Country choropleth hover — tooltip + fill highlight
+    // hoverActiveRef avoids expensive queryRenderedFeatures per pixel
+    // lastHoveredIsoRef skips full recompute when mouse stays in same country
+    map.on("mousemove", "country-fill", (e) => {
+      if (choroRef.current !== "country") return;
+      if (hoverActiveRef.current) {
+        if (lastHoveredIsoRef.current !== null) {
+          lastHoveredIsoRef.current = null;
+          setCountryHover(null);
+          map.getSource("country-hover")?.setData({ type:"FeatureCollection", features:[] });
+        }
+        return;
+      }
+      const feat = e.features?.[0];
+      if (!feat) {
+        if (lastHoveredIsoRef.current !== null) {
+          lastHoveredIsoRef.current = null;
+          setCountryHover(null);
+          map.getSource("country-hover")?.setData({ type:"FeatureCollection", features:[] });
+        }
+        return;
+      }
+      const isoA2 = feat.properties.iso_a2;
+      // Same country — just nudge the position, skip all stats recompute
+      if (isoA2 === lastHoveredIsoRef.current) {
+        setCountryHover((prev) => prev ? { ...prev, x: e.point.x, y: e.point.y } : null);
+        return;
+      }
+      lastHoveredIsoRef.current = isoA2;
+      const countryName = feat.properties.name ?? isoA2;
+      const cities = (dataRef.current || []).filter((d) => d.country === isoA2);
+      if (!cities.length) {
+        setCountryHover(null);
+        map.getSource("country-hover")?.setData({ type:"FeatureCollection", features:[] });
+        return;
+      }
+      const metric = metricRef.current;
+      const vals = cities.map((d) => d[metric] ?? d.us_aqi).filter((v) => v != null);
+      const avg  = vals.length ? vals.reduce((a, b) => a + b, 0) / vals.length : null;
+      const topCities = [...cities].sort((a, b) => ((b[metric] ?? 0) - (a[metric] ?? 0))).slice(0, 5);
+      setCountryHover({ countryName, isoA2, avg, cities: topCities, cityCount: cities.length, x: e.point.x, y: e.point.y });
+      map.getSource("country-hover")?.setData({
+        type: "FeatureCollection",
+        features: [{ type:"Feature", geometry: feat.geometry, properties: feat.properties }],
+      });
+    });
+    map.on("mouseleave", "country-fill", () => {
+      lastHoveredIsoRef.current = null;
+      setCountryHover(null);
+      map.getSource("country-hover")?.setData({ type:"FeatureCollection", features:[] });
+      map.getCanvas().style.cursor = "";
+    });
   };
 
   const setDots = (map) => {
@@ -827,15 +1307,14 @@ export default function AirQuality({
     if (src) src.setData(buildGeoJSON(dataRef.current, metricRef.current, colormapRef.current));
   };
 
-  // Unified country layer update: handles both choropleth fill and border line visibility
+  // Country layer update — choroplethOn controls both fill and border lines together
   const updateCountries = async (map) => {
     const src = map.getSource("countries");
     if (!src) return;
 
-    const wantFill   = choroRef.current === "country";
-    const wantBorder = borderLevelRef.current === "country" || borderLevelRef.current === "province";
+    const want = choroRef.current === "country";
 
-    if (!wantFill && !wantBorder) {
+    if (!want) {
       src.setData({ type: "FeatureCollection", features: [] });
       if (map.getLayer("country-fill")) map.setPaintProperty("country-fill", "fill-opacity", 0);
       if (map.getLayer("country-line")) map.setPaintProperty("country-line", "line-opacity", 0);
@@ -843,53 +1322,29 @@ export default function AirQuality({
     }
 
     try {
-      const gj = await fetch(COUNTRY_URL).then((r) => r.json());
-      const avgs = wantFill ? buildCountryAvg(dataRef.current, metricRef.current) : {};
+      if (!_countryGeoJson) _countryGeoJson = await fetch(COUNTRY_URL).then((r) => r.json());
+      const gj   = _countryGeoJson;
+      const avgs = buildCountryAvg(dataRef.current, metricRef.current);
       src.setData({
         ...gj,
         features: gj.features.map((f) => ({
           ...f,
           properties: {
             ...f.properties,
-            fillColor: wantFill && avgs[f.properties.iso_a2] != null
+            fillColor: avgs[f.properties.iso_a2] != null
               ? getMetricColor(metricRef.current, avgs[f.properties.iso_a2], colormapRef.current)
               : null,
           },
         })),
       });
-
       if (map.getLayer("country-fill"))
-        map.setPaintProperty("country-fill", "fill-opacity", wantFill ? 0.35 : 0);
-
+        map.setPaintProperty("country-fill", "fill-opacity", 0.35);
       if (map.getLayer("country-line")) {
-        map.setPaintProperty("country-line", "line-opacity", wantBorder ? 0.65 : 0);
+        map.setPaintProperty("country-line", "line-opacity", 0.65);
         map.setPaintProperty("country-line", "line-color",
           isLightRef.current ? "rgba(60,60,60,0.55)" : "rgba(210,210,210,0.3)");
       }
     } catch (e) { console.error("country update", e); }
-  };
-
-  // Province/state border lines — lazy-loaded and cached at module level
-  const setProvinces = async (map) => {
-    const src = map.getSource("provinces");
-    if (!src) return;
-
-    if (borderLevelRef.current !== "province") {
-      if (map.getLayer("province-line"))
-        map.setLayoutProperty("province-line", "visibility", "none");
-      return;
-    }
-
-    try {
-      if (!_provinceGeoJson)
-        _provinceGeoJson = await fetch(PROVINCE_URL).then((r) => r.json());
-      src.setData(_provinceGeoJson);
-      if (map.getLayer("province-line")) {
-        map.setLayoutProperty("province-line", "visibility", "visible");
-        map.setPaintProperty("province-line", "line-color",
-          isLightRef.current ? "rgba(60,60,60,0.3)" : "rgba(200,200,200,0.18)");
-      }
-    } catch (e) { console.error("provinces", e); }
   };
 
   // ── Init map once ──────────────────────────────────────────────────────────
@@ -902,6 +1357,7 @@ export default function AirQuality({
       center: [10, 22], zoom: 2, minZoom: 1.2,
       projection: "mercator", renderWorldCopies: true,
       attributionControl: false,
+      preserveDrawingBuffer: true,
     });
     map.addControl(new mapboxgl.NavigationControl({ showCompass: false }), "bottom-right");
     map.addControl(new mapboxgl.ScaleControl({ unit: "metric" }), "bottom-right");
@@ -954,30 +1410,24 @@ export default function AirQuality({
       }
       setDots(map);
       updateCountries(map);
-      setProvinces(map);
     };
 
     if (map.isStyleLoaded()) apply();
     else map.once("style.load", apply);
   }, [c.bg, oceanPreset, oceanRefreshKey]);
 
-  // ── Dots + countries update on data / metric / choropleth / colormap / borders change ──
+  // ── Dots + countries update on data / metric / choropleth / colormap change ──
   useEffect(() => {
-    dataRef.current        = data;
-    metricRef.current      = filters.metric;
-    choroRef.current       = choropleth;
-    colormapRef.current    = colormap;
-    borderLevelRef.current = borderLevel;
+    dataRef.current     = data;
+    metricRef.current   = filters.metric;
+    choroRef.current    = choropleth;
+    colormapRef.current = colormap;
     const map = mapInst.current;
     if (!map) return;
-    const update = () => {
-      setDots(map);
-      updateCountries(map);
-      setProvinces(map);
-    };
+    const update = () => { setDots(map); updateCountries(map); };
     if (map.isStyleLoaded()) update();
     else map.once("style.load", update);
-  }, [data, filters.metric, choropleth, colormap, borderLevel]);
+  }, [data, filters.metric, choropleth, colormap]);
 
   // ── Toggle city circle visibility ─────────────────────────────────────────
   useEffect(() => {
@@ -1002,12 +1452,60 @@ export default function AirQuality({
     }
   }, [filters.region]);
 
+  // ── Download helpers ───────────────────────────────────────────────────────
+  const downloadCSV = () => {
+    if (!data.length) return;
+    const keys = ["location","country","province","lat","lon","population",
+      "us_aqi","european_aqi","pm2_5","pm10","nitrogen_dioxide","ozone","dust","uv_index","measured_at"];
+    const header = keys.join(",");
+    const rows = data.map((row) =>
+      keys.map((k) => {
+        const v = row[k];
+        if (v == null) return "";
+        if (typeof v === "string" && v.includes(",")) return `"${v}"`;
+        return v;
+      }).join(",")
+    );
+    const csv = [header, ...rows].join("\n");
+    const blob = new Blob([csv], { type: "text/csv;charset=utf-8;" });
+    const url  = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = `carbon-monitor-${filters.region.replace(/\s+/g,"_")}-${new Date().toISOString().slice(0,10)}.csv`;
+    a.click();
+    URL.revokeObjectURL(url);
+  };
+
+  const downloadPNG = async () => {
+    const ts = new Date().toISOString().slice(0, 10);
+    if (viewMode === "map") {
+      const canvas = mapInst.current?.getCanvas();
+      if (!canvas) return;
+      canvas.toBlob((blob) => {
+        if (!blob) return;
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement("a"); a.href = url;
+        a.download = `carbon-monitor-map-${ts}.png`; a.click();
+        URL.revokeObjectURL(url);
+      });
+    } else {
+      alert("Chart PNG export requires html2canvas.\nRun: npm install html2canvas in your frontend directory.");
+    }
+  };
+
   // ── Resize map when switching back from charts ─────────────────────────────
   useEffect(() => {
     if (viewMode === "map" && mapInst.current) {
       window.requestAnimationFrame(() => mapInst.current?.resize());
     }
   }, [viewMode]);
+
+  // ── Register download functions with parent ────────────────────────────────
+  useEffect(() => {
+    if (downloadRef) {
+      downloadRef.current = { csv: downloadCSV, png: downloadPNG };
+    }
+  }, [data, viewMode, c.bg]);
 
   // ── Render ─────────────────────────────────────────────────────────────────
   return (
@@ -1018,19 +1516,15 @@ export default function AirQuality({
         visibility: viewMode === "map" ? "visible" : "hidden",
         pointerEvents: viewMode === "map" ? "auto" : "none",
       }} />
-      {/* Inset border to cover Mapbox edge artifacts with theme color */}
+      {/* Inset border to cover Mapbox edge artifacts */}
       <div style={{ position:"absolute", inset:0, pointerEvents:"none", zIndex:1,
         outline: `6px solid ${c.bg}`, outlineOffset: "-6px" }} />
 
       <ChartsView
-        data={data}
-        filters={filters}
-        metricMeta={metricMeta}
-        theme={theme}
-        colormap={colormap}
+        data={data} filters={filters} metricMeta={metricMeta}
+        theme={theme} colormap={colormap}
         active={viewMode === "charts"}
-        chartType={chartType}
-        onChartType={onChartType}
+        chartType={chartType} onChartType={onChartType}
       />
 
       {loading && !data.length && (
@@ -1048,11 +1542,17 @@ export default function AirQuality({
         <>
           {hover && !popup && (
             <HoverTooltip info={hover} W={cSize.w} H={cSize.h} theme={theme}
-              metric={filters.metric} colormap={colormap} />
+              metric={filters.metric} colormap={colormap} timeWindow={timeWindow} />
+          )}
+          {countryHover && !hover && !popup && (
+            <CountryTooltip
+              info={countryHover} W={cSize.w} H={cSize.h} theme={theme}
+              metric={filters.metric} metricMeta={metricMeta} colormap={colormap} />
           )}
           {popup && (
-            <CityPopup city={popup.city} pos={popup} W={cSize.w}
-              onClose={() => setPopup(null)} onViewTrend={(city) => setTrendCity(city)} theme={theme} />
+            <CityPopup city={popup.city} pos={popup} W={cSize.w} H={cSize.h}
+              onClose={() => setPopup(null)} onViewTrend={(city) => setTrendCity(city)}
+              theme={theme} timeWindow={timeWindow} />
           )}
           {trendCity && (
             <TrendPanel city={trendCity} metric={filters.metric} metricMeta={metricMeta}
