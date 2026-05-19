@@ -35,14 +35,72 @@ export const METRIC_META = Object.fromEntries(METRICS.map((m) => [m.id, m]));
 const TAB_H = 44;
 
 const KPI_DEFS = [
-  { id:"top5worst",      label:"5 Worst AQI",         defaultEdge:"top-right" },
-  { id:"top5best",       label:"5 Best AQI",          defaultEdge:"top-right" },
-  { id:"global_avg",     label:"Global Average",       defaultEdge:"top-left"  },
-  { id:"aqi_legend",     label:"AQI Legend",           defaultEdge:"bot-left"  },
-  { id:"region_summary", label:"Region Summary",       defaultEdge:"bot-right" },
+  { id:"top5worst",      label:"5 Worst AQI",    defaultEdge:"top-right" },
+  { id:"top5best",       label:"5 Best AQI",     defaultEdge:"top-right" },
+  { id:"global_avg",     label:"Global Average", defaultEdge:"top-left"  },
+  { id:"aqi_legend",     label:"AQI Legend",     defaultEdge:"bot-left"  },
+  { id:"region_summary", label:"Region Summary", defaultEdge:"bot-right" },
 ];
 
 const TEMPLATE_KEY = "cm_template_v1";
+
+// ── Time windows ──────────────────────────────────────────────────────────────
+export const TIME_WINDOWS = [
+  { id:"live", label:"Live",  days: null },
+  { id:"1d",   label:"1D",   days: 1    },
+  { id:"3d",   label:"3D",   days: 3    },
+  { id:"7d",   label:"7D",   days: 7    },
+  { id:"30d",  label:"30D",  days: 30   },
+  { id:"90d",  label:"90D",  days: 90   },
+  { id:"6m",   label:"6M",   days: 180  },
+  { id:"1y",   label:"1Y",   days: 365  },
+  { id:"2y",   label:"2Y",   days: 730  },
+  { id:"3y",   label:"3Y+",  days: 1095 },
+];
+
+// ── Metric plain-language explanations ───────────────────────────────────────
+export const METRIC_INFO = {
+  us_aqi: {
+    name: "US Air Quality Index",
+    desc: "A 0–500 score combining all measured pollutants. 0–50 is Good; above 100 affects sensitive groups; above 150 affects everyone; 300+ is Hazardous.",
+  },
+  european_aqi: {
+    name: "European AQI",
+    desc: "EU equivalent of the US AQI, using European pollutant thresholds. Scale 0–100+, where higher = worse.",
+  },
+  pm2_5: {
+    name: "Fine Particles (PM2.5)",
+    desc: "Particles ≤2.5 micrometers — small enough to enter the bloodstream. Main sources: wildfires, vehicle exhaust, industrial smoke. Most harmful long-term.",
+  },
+  pm10: {
+    name: "Coarse Particles (PM10)",
+    desc: "Larger airborne particles ≤10 micrometers including dust, pollen and mould. Irritate the nose, throat and upper airways.",
+  },
+  nitrogen_dioxide: {
+    name: "Nitrogen Dioxide (NO₂)",
+    desc: "Gas produced by burning fuel in cars and power plants. Contributes to smog, acid rain, and respiratory inflammation.",
+  },
+  ozone: {
+    name: "Ground-level Ozone (O₃)",
+    desc: "Not the protective stratospheric layer. Forms at ground level when sunlight reacts with vehicle and industrial emissions. Causes coughing and reduced lung function.",
+  },
+  dust: {
+    name: "Mineral Dust",
+    desc: "Soil and desert particles carried by wind. Reduces visibility and aggravates respiratory conditions — especially common in the Middle East and Central Asia.",
+  },
+  uv_index: {
+    name: "UV Index",
+    desc: "Intensity of ultraviolet radiation from the sun. 0–2: Low, 3–5: Moderate, 6–7: High, 8–10: Very High, 11+: Extreme. Higher values increase sunburn risk.",
+  },
+};
+
+// ── Chart types ───────────────────────────────────────────────────────────────
+export const CHART_TYPES = [
+  { id:"bar",     icon:"▬▬", label:"Ranking"  },
+  { id:"line",    icon:"∿",  label:"Trend"    },
+  { id:"scatter", icon:"⬤⬤", label:"Compare"  },
+  { id:"heatmap", icon:"▦",  label:"Heatmap"  },
+];
 
 // ── Shared UI ─────────────────────────────────────────────────────────────────
 function ModePill({ value, onChange, options, theme }) {
@@ -89,14 +147,11 @@ function Accordion({ title, children, theme, defaultOpen=false }) {
   );
 }
 
-// ── Compact theme picker (self-contained) ─────────────────────────────────────
 function CompactThemePicker() {
   const ctx   = useTheme();
   const theme = ctx.theme;
-  const c     = theme.colors;
   const mono  = theme.typography.fontFamilyMono;
   const apply = ctx.switchTheme ?? ctx.setTheme ?? ctx.setActiveTheme ?? (() => {});
-
   return (
     <div style={{ display:"grid", gridTemplateColumns:"repeat(3,1fr)", gap:8 }}>
       {BUILT_IN_THEMES.map((t) => {
@@ -110,8 +165,7 @@ function CompactThemePicker() {
             boxShadow: active ? `0 0 0 2px ${t.colors.accent}44` : "none",
           }}>
             <div style={{ display:"flex", gap:4, alignItems:"center" }}>
-              <div style={{ width:10, height:10, borderRadius:"50%",
-                background:t.colors.accent, flexShrink:0 }} />
+              <div style={{ width:10, height:10, borderRadius:"50%", background:t.colors.accent, flexShrink:0 }} />
               <div style={{ flex:1, height:4, borderRadius:2, background:t.colors.border }} />
               <div style={{ width:14, height:4, borderRadius:2, background:t.colors.surface }} />
             </div>
@@ -126,7 +180,6 @@ function CompactThemePicker() {
   );
 }
 
-// ── Colormap picker ───────────────────────────────────────────────────────────
 function ColormapPicker({ value, onChange, theme }) {
   const c = theme.colors, mono = theme.typography.fontFamilyMono;
   return (
@@ -143,8 +196,7 @@ function ColormapPicker({ value, onChange, theme }) {
             boxShadow: active ? `0 0 0 2px ${c.accent}44` : "none",
           }}>
             <div style={{ height:10, borderRadius:4, background:grad }} />
-            <div style={{ fontFamily:mono, fontSize:9,
-              fontWeight:active?700:500,
+            <div style={{ fontFamily:mono, fontSize:9, fontWeight:active?700:500,
               color: active ? c.accent : c.textMuted, textAlign:"left" }}>
               {name}
             </div>
@@ -164,7 +216,6 @@ function SettingsModal({ open, onClose, theme,
   themeSyncing, onRefreshThemeState }) {
   const c = theme.colors, mono = theme.typography.fontFamilyMono;
   if (!open) return null;
-
   return (
     <>
       <div onClick={onClose} style={{
@@ -180,22 +231,14 @@ function SettingsModal({ open, onClose, theme,
         boxShadow:"0 24px 64px rgba(0,0,0,0.6)",
         display:"flex", flexDirection:"column", overflow:"hidden",
       }}>
-
-        {/* Header */}
         <div style={{ padding:"14px 20px", borderBottom:`1px solid ${c.border}`,
           display:"flex", justifyContent:"space-between", alignItems:"center", flexShrink:0 }}>
           <div style={{ fontFamily:mono, fontSize:11, letterSpacing:"0.18em",
             textTransform:"uppercase", color:c.text, fontWeight:700 }}>⚙ Settings</div>
           <button onClick={onClose} style={{
-            background:"none", border:"none", color:c.textMuted,
-            fontSize:20, cursor:"pointer", lineHeight:1,
-          }}>×</button>
+            background:"none", border:"none", color:c.textMuted, fontSize:20, cursor:"pointer", lineHeight:1 }}>×</button>
         </div>
-
-        {/* Body */}
         <div style={{ overflowY:"auto", flex:1 }}>
-
-          {/* ABOUT — top, collapsed */}
           <Accordion title="About" theme={theme} defaultOpen={false}>
             <div style={{ fontFamily:mono, fontSize:10, color:c.textMuted, lineHeight:1.9 }}>
               <div style={{ color:c.textSubtle, fontSize:9, letterSpacing:"0.14em",
@@ -209,24 +252,19 @@ function SettingsModal({ open, onClose, theme,
               <div>Historical: 178,687 rows</div>
               <div style={{ marginTop:10 }}>
                 <a href="https://github.com/j031nich0145/6print" target="_blank"
-                  rel="noopener" style={{ color:c.accent }}>
-                  github.com/j031nich0145/6print
-                </a>
+                  rel="noopener" style={{ color:c.accent }}>github.com/j031nich0145/6print</a>
               </div>
             </div>
           </Accordion>
 
-          {/* KPI CARDS — top, collapsed */}
           <Accordion title="KPI Cards" theme={theme} defaultOpen={false}>
-            {/* Checkboxes */}
             <div style={{ marginBottom:12 }}>
               {KPI_DEFS.map(({ id, label }) => {
                 const active = kpiState.find((k)=>k.id===id)?.visible ?? false;
                 return (
                   <label key={id} style={{ display:"flex", alignItems:"center", gap:10,
                     padding:"7px 0", borderBottom:`1px solid ${c.border}`, cursor:"pointer" }}>
-                    <input type="checkbox" checked={active}
-                      onChange={()=>onKpiToggle(id)}
+                    <input type="checkbox" checked={active} onChange={()=>onKpiToggle(id)}
                       style={{ width:14, height:14, cursor:"pointer", accentColor:c.accent }}/>
                     <span style={{ fontFamily:mono, fontSize:11, color:c.text, flex:1 }}>{label}</span>
                     {active && <span style={{ fontFamily:mono, fontSize:9,
@@ -235,11 +273,8 @@ function SettingsModal({ open, onClose, theme,
                 );
               })}
             </div>
-            {/* Auto-align + Hide All */}
             <div style={{ display:"flex", alignItems:"center", gap:8, flexWrap:"wrap" }}>
-              <span style={{ fontFamily:mono, fontSize:10, color:c.textMuted }}>
-                Auto-align:
-              </span>
+              <span style={{ fontFamily:mono, fontSize:10, color:c.textMuted }}>Auto-align:</span>
               {["top","bottom","left","right"].map((edge) => (
                 <button key={edge} onClick={()=>onAlignCards(edge)} style={{
                   padding:"4px 12px",
@@ -263,19 +298,15 @@ function SettingsModal({ open, onClose, theme,
             </div>
           </Accordion>
 
-          {/* DISPLAY / THEME — open */}
           <Accordion title="Display / Theme" theme={theme} defaultOpen>
             <CompactThemePicker />
             <div style={{ marginTop:14, marginBottom:6,
               fontSize:9, letterSpacing:"0.14em", color:c.textSubtle,
-              textTransform:"uppercase", fontFamily:mono }}>
-              Ocean Color
-            </div>
+              textTransform:"uppercase", fontFamily:mono }}>Ocean Color</div>
             <div style={{ display:"grid", gridTemplateColumns:"repeat(3,1fr)", gap:8 }}>
               {OCEAN_PRESETS.map(({ id, label }) => {
                 const active = oceanPreset === id;
                 const isLt   = theme.meta.tags?.includes("light");
-                // Use the same resolver as the map/template previews.
                 const previewColor = resolveOceanColor(id, isLt);
                 return (
                   <button key={id} onClick={()=>onOcean(id)} style={{
@@ -285,41 +316,30 @@ function SettingsModal({ open, onClose, theme,
                     display:"flex", flexDirection:"column", gap:5, transition:"all 0.15s",
                     boxShadow: active ? `0 0 0 2px ${c.accent}44` : "none",
                   }}>
-                    <div style={{ height:10, borderRadius:4,
-                      background: previewColor, border:`1px solid ${c.border}` }} />
-                    <div style={{ fontFamily:mono, fontSize:9,
-                      fontWeight:active?700:500,
-                      color: active ? c.accent : c.textMuted }}>
-                      {label}
-                    </div>
+                    <div style={{ height:10, borderRadius:4, background: previewColor, border:`1px solid ${c.border}` }} />
+                    <div style={{ fontFamily:mono, fontSize:9, fontWeight:active?700:500,
+                      color: active ? c.accent : c.textMuted }}>{label}</div>
                   </button>
                 );
               })}
             </div>
           </Accordion>
 
-          {/* PLOTS & COLORMAPS — open */}
           <Accordion title="Plots & Colormaps" theme={theme} defaultOpen>
             <ColormapPicker value={colormap} onChange={onColormap} theme={theme} />
           </Accordion>
-
         </div>
 
-        {/* Template bar — bottom of settings modal */}
         <div style={{ padding:"10px 20px", borderTop:`1px solid ${c.border}`,
           display:"flex", alignItems:"center", gap:8, flexShrink:0 }}>
-          <span style={{ fontFamily:mono, fontSize:10, color:c.textSubtle, letterSpacing:"0.08em" }}>
-            Templates:
-          </span>
+          <span style={{ fontFamily:mono, fontSize:10, color:c.textSubtle, letterSpacing:"0.08em" }}>Templates:</span>
           <button onClick={onManageTemplates} style={{
             padding:"5px 16px",
             background:c.accentSubtle, border:`1px solid ${c.accent}`,
             borderRadius:theme.shape.buttonRadius,
             color:c.accent, fontFamily:mono, fontSize:10, cursor:"pointer",
           }}>Manage →</button>
-          <span style={{ fontFamily:mono, fontSize:9, color:c.textSubtle }}>
-            Save &amp; load full layouts
-          </span>
+          <span style={{ fontFamily:mono, fontSize:9, color:c.textSubtle }}>Save &amp; load full layouts</span>
           <div style={{
             marginLeft:"auto", display:"flex", alignItems:"center", gap:8,
             fontFamily:mono, fontSize:9,
@@ -346,13 +366,11 @@ function TemplateModal({ open, onClose, onLoad, currentState, theme }) {
   const c = theme.colors, mono = theme.typography.fontFamilyMono;
   const [templates, setTemplates] = useState({});
   const [saveName,  setSaveName]  = useState("");
-  const [kabob,     setKabob]     = useState(null);  // key of open kabob menu
-  const [renaming,  setRenaming]  = useState(null);  // key being renamed
+  const [kabob,     setKabob]     = useState(null);
+  const [renaming,  setRenaming]  = useState(null);
   const [newName,   setNewName]   = useState("");
 
-  useEffect(() => {
-    if (open) reload();
-  }, [open]);
+  useEffect(() => { if (open) reload(); }, [open]);
 
   const reload = () =>
     setTemplates(JSON.parse(localStorage.getItem(TEMPLATE_KEY) || "{}"));
@@ -405,18 +423,14 @@ function TemplateModal({ open, onClose, onLoad, currentState, theme }) {
         boxShadow:"0 24px 64px rgba(0,0,0,0.7)",
         display:"flex", flexDirection:"column", overflow:"hidden",
       }}>
-        {/* Header */}
         <div style={{ padding:"14px 20px", borderBottom:`1px solid ${c.border}`,
           display:"flex", justifyContent:"space-between", alignItems:"center", flexShrink:0 }}>
           <span style={{ fontFamily:mono, fontSize:11, letterSpacing:"0.18em",
-            textTransform:"uppercase", fontWeight:700, color:c.text }}>
-            Manage Templates
-          </span>
+            textTransform:"uppercase", fontWeight:700, color:c.text }}>Manage Templates</span>
           <button onClick={onClose} style={{
             background:"none", border:"none", color:c.textMuted, fontSize:20, cursor:"pointer" }}>×</button>
         </div>
 
-        {/* Save new */}
         <div style={{ padding:"12px 20px", borderBottom:`1px solid ${c.border}`,
           display:"flex", gap:8, alignItems:"center", flexShrink:0 }}>
           <input value={saveName} onChange={(e)=>setSaveName(e.target.value)}
@@ -434,23 +448,19 @@ function TemplateModal({ open, onClose, onLoad, currentState, theme }) {
           }}>Save Current</button>
         </div>
 
-        {/* Grid of templates */}
         <div style={{ overflowY:"auto", flex:1, padding:"16px 20px" }}>
           {entries.length === 0 && (
             <div style={{ fontFamily:mono, fontSize:11, color:c.textSubtle,
-              textAlign:"center", padding:"32px 0" }}>
-              No saved templates yet
-            </div>
+              textAlign:"center", padding:"32px 0" }}>No saved templates yet</div>
           )}
           <div style={{ display:"grid", gridTemplateColumns:"repeat(auto-fill,minmax(180px,1fr))", gap:12 }}>
             {entries.map(([key, tmpl]) => {
               const savedTheme = BUILT_IN_THEMES.find(t=>t.meta.id===tmpl.themeId) ?? BUILT_IN_THEMES[0];
-              const cmStops   = COLORMAP_DEFS[tmpl.colormap ?? "aqi"]?.stops ?? [];
+              const cmStops    = COLORMAP_DEFS[tmpl.colormap ?? "aqi"]?.stops ?? [];
               const oceanColor = resolveOceanColor(tmpl.oceanPreset, savedTheme.meta.tags?.includes("light"));
-              const isKabob   = kabob === key;
+              const isKabob    = kabob === key;
               return (
                 <div key={key} style={{ position:"relative", borderRadius:8, overflow:"visible" }}>
-                  {/* Tile */}
                   <div onClick={()=>{onLoad(tmpl);onClose();}}
                     style={{
                       background: savedTheme.colors.bg,
@@ -460,21 +470,14 @@ function TemplateModal({ open, onClose, onLoad, currentState, theme }) {
                     }}
                     onMouseEnter={(e)=>e.currentTarget.style.borderColor=savedTheme.colors.accent}
                     onMouseLeave={(e)=>e.currentTarget.style.borderColor=savedTheme.colors.border}>
-                    {/* Theme accent bar */}
                     <div style={{ height:5, background:savedTheme.colors.accent }} />
-                    {/* Colormap strip */}
                     <div style={{ height:8, background:cmStops.length
                       ? `linear-gradient(to right,${cmStops.join(",")})`
                       : savedTheme.colors.surface }} />
-                    {/* Ocean + theme color swatch row */}
-                    <div style={{ display:"flex", gap:4, padding:"6px 8px",
-                      background:savedTheme.colors.surface }}>
-                      <div style={{ width:14, height:14, borderRadius:"50%",
-                        background:savedTheme.colors.accent }} />
-                      <div style={{ flex:1, height:14, borderRadius:3,
-                        background:oceanColor }} />
+                    <div style={{ display:"flex", gap:4, padding:"6px 8px", background:savedTheme.colors.surface }}>
+                      <div style={{ width:14, height:14, borderRadius:"50%", background:savedTheme.colors.accent }} />
+                      <div style={{ flex:1, height:14, borderRadius:3, background:oceanColor }} />
                     </div>
-                    {/* Name */}
                     {renaming === key ? (
                       <div style={{ padding:"4px 8px 8px" }} onClick={(e)=>e.stopPropagation()}>
                         <input autoFocus value={newName}
@@ -487,8 +490,7 @@ function TemplateModal({ open, onClose, onLoad, currentState, theme }) {
                             background:savedTheme.colors.bg,
                             border:`1px solid ${savedTheme.colors.accent}`,
                             borderRadius:4, color:savedTheme.colors.text,
-                            fontFamily:mono, fontSize:10, outline:"none",
-                            boxSizing:"border-box" }}/>
+                            fontFamily:mono, fontSize:10, outline:"none", boxSizing:"border-box" }}/>
                       </div>
                     ) : (
                       <div style={{ padding:"6px 8px 8px",
@@ -499,8 +501,6 @@ function TemplateModal({ open, onClose, onLoad, currentState, theme }) {
                       </div>
                     )}
                   </div>
-
-                  {/* Kabob ⋮ button */}
                   <button onClick={(e)=>{e.stopPropagation();setKabob(isKabob?null:key);}}
                     style={{
                       position:"absolute", top:4, right:4,
@@ -510,8 +510,6 @@ function TemplateModal({ open, onClose, onLoad, currentState, theme }) {
                       display:"flex", alignItems:"center", justifyContent:"center",
                       lineHeight:1, zIndex:10,
                     }}>⋮</button>
-
-                  {/* Kabob dropdown */}
                   {isKabob && (
                     <div onClick={(e)=>e.stopPropagation()} style={{
                       position:"absolute", top:28, right:0, zIndex:200,
@@ -527,8 +525,7 @@ function TemplateModal({ open, onClose, onLoad, currentState, theme }) {
                           display:"block", width:"100%", padding:"8px 14px",
                           background:"none", border:"none", textAlign:"left",
                           fontFamily:mono, fontSize:10, letterSpacing:"0.08em",
-                          color: danger ? "#ef4444" : c.textMuted,
-                          cursor:"pointer",
+                          color: danger ? "#ef4444" : c.textMuted, cursor:"pointer",
                         }}
                         onMouseEnter={(e)=>e.currentTarget.style.background=c.surface}
                         onMouseLeave={(e)=>e.currentTarget.style.background="none"}
@@ -546,88 +543,242 @@ function TemplateModal({ open, onClose, onLoad, currentState, theme }) {
   );
 }
 
-// ── Filter Panel ──────────────────────────────────────────────────────────────
-function FilterPanel({ open, filters, onFilter, onRefresh, loading, cityCount,
-  lastUpdate, viewMode, onViewMode, choropleth, onChoropleth, theme }) {
+// ── Side Panel ────────────────────────────────────────────────────────────────
+// Replaces FilterPanel. Context-aware: Maps filters vs Charts controls.
+function SidePanel({
+  open, filters, onFilter, onRefresh, loading, histLoading,
+  viewMode, onViewMode,
+  choropleth, onChoropleth,
+  borderLevel, onBorderLevel,
+  showCities, onShowCities,
+  satellite, onSatellite,
+  timeWindow, onTimeWindow,
+  chartType, onChartType,
+  theme,
+}) {
   const c = theme.colors, mono = theme.typography.fontFamilyMono;
-  const sel = { width:"100%", padding:"7px 10px", marginBottom:14,
-    background:c.inputBg, border:`1px solid ${c.inputBorder}`,
-    borderRadius:theme.shape.inputRadius, color:c.text,
-    fontFamily:mono, fontSize:12, cursor:"pointer", outline:"none" };
-  const lbl = { fontFamily:mono, fontSize:10, letterSpacing:"0.14em",
-    textTransform:"uppercase", color:c.textSubtle, marginBottom:5, display:"block" };
-  const sec = (t) => (
+  const [metricInfoOpen, setMetricInfoOpen] = useState(false);
+
+  const selStyle = {
+    width:"100%", padding:"7px 10px",
+    background: c.inputBg ?? c.surface,
+    border:`1px solid ${c.inputBorder ?? c.border}`,
+    borderRadius: theme.shape.inputRadius ?? theme.shape.buttonRadius,
+    color:c.text, fontFamily:mono, fontSize:11, cursor:"pointer", outline:"none",
+    marginBottom:12,
+  };
+
+  const SecLabel = ({ children }) => (
     <div style={{ fontFamily:mono, fontSize:9, letterSpacing:"0.2em",
       textTransform:"uppercase", color:c.textSubtle,
-      borderBottom:`1px solid ${c.border}`, paddingBottom:6,
-      marginBottom:14, marginTop:4 }}>{t}</div>
+      borderBottom:`1px solid ${c.border}`, paddingBottom:5,
+      marginBottom:10, marginTop:4 }}>{children}</div>
   );
+
+  const Toggle = ({ label, value, onChange }) => (
+    <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center",
+      padding:"7px 0", borderBottom:`1px solid ${c.border}` }}>
+      <span style={{ fontFamily:mono, fontSize:10, color:c.textMuted }}>{label}</span>
+      <button onClick={()=>onChange(!value)} style={{
+        width:38, height:22, borderRadius:11,
+        background: value ? c.accent : c.surface,
+        border:`1px solid ${value ? c.accent : c.border}`,
+        cursor:"pointer", position:"relative", transition:"all 0.18s", flexShrink:0,
+        padding:0,
+      }}>
+        <div style={{
+          position:"absolute", top:3, left: value ? 18 : 3,
+          width:14, height:14, borderRadius:"50%",
+          background: value ? (c.accentFg ?? "#fff") : c.textSubtle,
+          transition:"left 0.18s",
+        }}/>
+      </button>
+    </div>
+  );
+
+  const PillGroup = ({ options, value, onChange }) => (
+    <div style={{ display:"flex", gap:4, marginBottom:12 }}>
+      {options.map(opt => {
+        const active = value === opt.id;
+        return (
+          <button key={opt.id} onClick={()=>onChange(opt.id)} style={{
+            flex:1, padding:"6px 4px",
+            background: active ? c.accentSubtle : c.surface,
+            border:`1px solid ${active ? c.accent : c.border}`,
+            borderRadius:theme.shape.buttonRadius,
+            color: active ? c.accent : c.textMuted,
+            fontFamily:mono, fontSize:9, cursor:"pointer",
+            letterSpacing:"0.06em", textTransform:"uppercase",
+            transition:"all 0.15s",
+          }}>{opt.label}</button>
+        );
+      })}
+    </div>
+  );
+
+  const metricInfo = METRIC_INFO[filters.metric];
+
   return (
     <div style={{
-      position:"fixed", top:TAB_H, left:0, bottom:0, width:240,
-      background:c.sidebar, borderRight:`1px solid ${c.border}`,
+      position:"fixed", top:TAB_H, left:0, bottom:0, width:244,
+      background: c.sidebar ?? c.panel,
+      borderRight:`1px solid ${c.border}`,
       boxShadow:"4px 0 24px rgba(0,0,0,0.4)", zIndex:200,
       display:"flex", flexDirection:"column",
-      transform: open?"translateX(0)":"translateX(-100%)",
+      transform: open ? "translateX(0)" : "translateX(-100%)",
       transition:"transform 0.2s cubic-bezier(0.4,0,0.2,1)",
     }}>
-      <div style={{ padding:"14px 16px 12px", borderBottom:`1px solid ${c.border}`, flexShrink:0 }}>
-        <div style={{ fontFamily:mono, fontSize:9, letterSpacing:"0.22em",
-          color:c.accent, fontWeight:700, textTransform:"uppercase", marginBottom:10 }}>
-          Carbon Monitor
-        </div>
+      {/* View mode toggle */}
+      <div style={{ padding:"12px 14px 10px", borderBottom:`1px solid ${c.border}`, flexShrink:0 }}>
         <ModePill value={viewMode} onChange={onViewMode}
           options={[{id:"map",label:"Map"},{id:"charts",label:"Charts"}]} theme={theme} />
-        {lastUpdate && (
-          <div style={{ fontFamily:mono, fontSize:9, color:c.textSubtle,
-            letterSpacing:"0.08em", marginTop:8 }}>
-            {lastUpdate.slice(0,16).replace("T"," ")} UTC
-          </div>
-        )}
-        <div style={{ fontFamily:mono, fontSize:9, color:c.textSubtle, marginTop:2 }}>
-          {cityCount} cities loaded
-        </div>
       </div>
-      <div style={{ flex:1, overflowY:"auto", padding:14 }}>
-        {sec("Filters")}
-        <label style={lbl}>Region</label>
-        <select style={sel} value={filters.region}
-          onChange={(e)=>onFilter({...filters,region:e.target.value})}>
-          {REGIONS.map((r)=><option key={r}>{r}</option>)}
-        </select>
-        <label style={lbl}>Metric</label>
-        <select style={sel} value={filters.metric}
-          onChange={(e)=>onFilter({...filters,metric:e.target.value})}>
-          {METRICS.map((m)=>(
-            <option key={m.id} value={m.id}>{m.label}{m.unit?` (${m.unit})`:""}</option>
-          ))}
-        </select>
-        <label style={lbl}>Min Population</label>
-        <select style={sel} value={String(filters.minPop)}
-          onChange={(e)=>onFilter({...filters,minPop:Number(e.target.value)})}>
-          {[["0","Any"],["500000","500k+"],["1000000","1M+"],["5000000","5M+"],["10000000","10M+"]].map(([v,l])=>(
-            <option key={v} value={v}>{l}</option>
-          ))}
-        </select>
-        {viewMode==="map" && (
+
+      <div style={{ flex:1, overflowY:"auto", padding:"12px 14px 16px" }}>
+
+        {/* Charts mode: chart type selector */}
+        {viewMode === "charts" && (
           <>
-            {sec("Overlay")}
-            <ModePill value={choropleth} onChange={onChoropleth}
-              options={[{id:"none",label:"Dots"},{id:"country",label:"Country"}]} theme={theme} />
+            <SecLabel>Chart Type</SecLabel>
+            <div style={{ display:"grid", gridTemplateColumns:"repeat(2,1fr)", gap:6, marginBottom:16 }}>
+              {CHART_TYPES.map(ct => {
+                const active = chartType === ct.id;
+                return (
+                  <button key={ct.id} onClick={()=>onChartType(ct.id)} style={{
+                    padding:"9px 6px",
+                    background: active ? c.accentSubtle : c.surface,
+                    border:`1px solid ${active ? c.accent : c.border}`,
+                    borderRadius:theme.shape.buttonRadius,
+                    color: active ? c.accent : c.textMuted,
+                    fontFamily:mono, fontSize:9, cursor:"pointer",
+                    display:"flex", flexDirection:"column", alignItems:"center", gap:4,
+                    transition:"all 0.15s",
+                  }}>
+                    <span style={{ fontSize:16, lineHeight:1 }}>{ct.icon}</span>
+                    <span style={{ letterSpacing:"0.08em", textTransform:"uppercase",
+                      fontWeight: active ? 700 : 400 }}>{ct.label}</span>
+                  </button>
+                );
+              })}
+            </div>
           </>
         )}
-        <div style={{ marginTop:16 }}>
-          <button onClick={onRefresh} disabled={loading} style={{
+
+        {/* Time window */}
+        <SecLabel>Time Window</SecLabel>
+        <div style={{ display:"grid", gridTemplateColumns:"repeat(5,1fr)", gap:3, marginBottom: timeWindow !== "live" ? 8 : 14 }}>
+          {TIME_WINDOWS.map(tw => {
+            const active = timeWindow === tw.id;
+            return (
+              <button key={tw.id} onClick={()=>onTimeWindow(tw.id)} style={{
+                padding:"5px 2px",
+                background: active ? c.accent : c.surface,
+                border:`1px solid ${active ? c.accent : c.border}`,
+                borderRadius:theme.shape.buttonRadius,
+                color: active ? (c.accentFg ?? "#fff") : c.textMuted,
+                fontFamily:mono, fontSize:9, cursor:"pointer",
+                textAlign:"center", letterSpacing:"0.03em",
+                transition:"all 0.12s", fontWeight: active ? 700 : 400,
+              }}>{tw.label}</button>
+            );
+          })}
+        </div>
+        {timeWindow !== "live" && (
+          <div style={{ fontFamily:mono, fontSize:9, color:c.accent, marginBottom:12,
+            background:`${c.accent}18`, border:`1px solid ${c.accent}44`,
+            borderRadius:4, padding:"5px 8px", letterSpacing:"0.06em" }}>
+            {histLoading ? "⟳ Fetching historical…" : "↩ Historical averages"}
+          </div>
+        )}
+
+        {/* Metric + info */}
+        <SecLabel>Metric</SecLabel>
+        <div style={{ display:"flex", gap:6, alignItems:"center",
+          marginBottom: metricInfoOpen ? 8 : 12 }}>
+          <select
+            style={{ ...selStyle, flex:1, marginBottom:0 }}
+            value={filters.metric}
+            onChange={(e) => onFilter({ ...filters, metric: e.target.value })}>
+            {METRICS.map((m) => (
+              <option key={m.id} value={m.id}>{m.label}{m.unit ? ` (${m.unit})` : ""}</option>
+            ))}
+          </select>
+          <button
+            onClick={() => setMetricInfoOpen(v => !v)}
+            title="What does this measure?"
+            style={{
+              width:30, height:30, flexShrink:0,
+              background: metricInfoOpen ? c.accentSubtle : c.surface,
+              border:`1px solid ${metricInfoOpen ? c.accent : c.border}`,
+              borderRadius:theme.shape.buttonRadius,
+              color: metricInfoOpen ? c.accent : c.textMuted,
+              fontSize:14, cursor:"pointer", transition:"all 0.15s",
+              display:"flex", alignItems:"center", justifyContent:"center",
+            }}>📋</button>
+        </div>
+        {metricInfoOpen && metricInfo && (
+          <div style={{
+            background: c.surface,
+            border:`1px solid ${c.accent}55`,
+            borderLeft:`3px solid ${c.accent}`,
+            borderRadius:theme.shape.cardRadius ?? 6,
+            padding:"8px 10px", marginBottom:12,
+          }}>
+            <div style={{ fontFamily:mono, fontSize:10, fontWeight:700,
+              color:c.accent, marginBottom:4 }}>{metricInfo.name}</div>
+            <div style={{ fontFamily:mono, fontSize:10, color:c.textMuted, lineHeight:1.75 }}>
+              {metricInfo.desc}
+            </div>
+          </div>
+        )}
+
+        {/* Region */}
+        <SecLabel>Region</SecLabel>
+        <select style={selStyle} value={filters.region}
+          onChange={(e) => onFilter({ ...filters, region: e.target.value })}>
+          {REGIONS.map((r) => <option key={r}>{r}</option>)}
+        </select>
+
+        {/* Map-only controls */}
+        {viewMode === "map" && (
+          <>
+            <SecLabel>Layers</SecLabel>
+            <Toggle label="City Circles" value={showCities} onChange={onShowCities} />
+            <Toggle label="Satellite"    value={satellite}  onChange={onSatellite}  />
+
+            <div style={{ marginTop:12 }}>
+              <SecLabel>Borders</SecLabel>
+              <PillGroup
+                value={borderLevel}
+                onChange={onBorderLevel}
+                options={[
+                  { id:"none",     label:"None"     },
+                  { id:"country",  label:"Country"  },
+                  { id:"province", label:"Province" },
+                ]}
+              />
+            </div>
+
+            <SecLabel>Plots</SecLabel>
+            <ModePill
+              value={choropleth}
+              onChange={onChoropleth}
+              options={[{id:"none",label:"Dots"},{id:"country",label:"Choropleth"}]}
+              theme={theme}
+            />
+          </>
+        )}
+
+        {/* Refresh */}
+        <div style={{ marginTop:18 }}>
+          <button onClick={onRefresh} disabled={loading || histLoading} style={{
             width:"100%", padding:8,
-            background:c.accentSubtle, border:`1px solid ${c.accent}`,
+            background: c.accentSubtle, border:`1px solid ${c.accent}`,
             borderRadius:theme.shape.buttonRadius, color:c.accent,
             fontFamily:mono, fontSize:11, letterSpacing:"0.1em",
-            cursor:loading?"wait":"pointer", opacity:loading?0.6:1,
-          }}>{loading?"Loading...":"↺  Refresh"}</button>
-        </div>
-        <div style={{ fontFamily:mono, fontSize:9, color:c.textSubtle,
-          marginTop:14, lineHeight:1.8 }}>
-          Open-Meteo → Lambda → S3 → Snowflake · 30 min
+            cursor:(loading||histLoading)?"wait":"pointer",
+            opacity:(loading||histLoading)?0.6:1,
+          }}>{loading ? "Loading…" : histLoading ? "Fetching…" : "↺  Refresh"}</button>
         </div>
       </div>
     </div>
@@ -636,7 +787,6 @@ function FilterPanel({ open, filters, onFilter, onRefresh, loading, cityCount,
 
 // ── KPI cards layer ───────────────────────────────────────────────────────────
 function KpiCardsLayer({ kpiState, data, filters, metricMeta, theme, onPositionSave }) {
-  const visibleIds = kpiState.filter((k)=>k.visible).map((k)=>k.id);
   const edgeCounts = {};
 
   const getPos = (id) => {
@@ -697,20 +847,26 @@ export default function App() {
   const { theme, switchTheme } = useTheme();
   const c = theme.colors, mono = theme.typography.fontFamilyMono;
 
-  const [activeTab,    setActiveTab]    = useState("aqi");
-  const [filtersOpen,  setFiltersOpen]  = useState(false);
-  const [settingsOpen, setSettingsOpen] = useState(false);
-  const [templateOpen, setTemplateOpen] = useState(false);
-  const [filters,      setFilters]      = useState({ region:"All Regions", metric:"us_aqi", minPop:0 });
-  const [viewMode,     setViewMode]     = useState("map");
-  const [choropleth,   setChoropleth]   = useState("none");
-  const [colormap,     setColormap]     = useState("aqi");
-  const [oceanPreset,  setOceanPreset]  = useState("auto");
-  const [themeSyncing, setThemeSyncing] = useState(false);
+  const [activeTab,       setActiveTab]       = useState("aqi");
+  const [filtersOpen,     setFiltersOpen]     = useState(false);
+  const [settingsOpen,    setSettingsOpen]    = useState(false);
+  const [templateOpen,    setTemplateOpen]    = useState(false);
+  const [filters,         setFilters]         = useState({ region:"All Regions", metric:"us_aqi" });
+  const [viewMode,        setViewMode]        = useState("map");
+  const [choropleth,      setChoropleth]      = useState("none");
+  const [borderLevel,     setBorderLevel]     = useState("country");
+  const [showCities,      setShowCities]      = useState(true);
+  const [satellite,       setSatellite]       = useState(false);
+  const [colormap,        setColormap]        = useState("aqi");
+  const [oceanPreset,     setOceanPreset]     = useState("auto");
+  const [themeSyncing,    setThemeSyncing]    = useState(false);
   const [oceanRefreshKey, setOceanRefreshKey] = useState(0);
-  const [aqiData,      setAqiData]      = useState([]);
-  const [loading,      setLoading]      = useState(true);
-  const [lastUpdate,   setLastUpdate]   = useState(null);
+  const [chartType,       setChartType]       = useState("bar");
+  const [timeWindow,      setTimeWindow]      = useState("live");
+  const [aqiData,         setAqiData]         = useState([]);
+  const [loading,         setLoading]         = useState(true);
+  const [historicalData,  setHistoricalData]  = useState([]);
+  const [histLoading,     setHistLoading]     = useState(false);
 
   const [kpiState, setKpiState] = useState(() => {
     const saved = JSON.parse(localStorage.getItem("kpi_state") || "null");
@@ -724,29 +880,45 @@ export default function App() {
     localStorage.setItem("kpi_state", JSON.stringify(kpiState));
   }, [kpiState]);
 
+  // Live data fetch
   const fetchAQI = async () => {
     setLoading(true);
     try {
       const params = {};
       if (filters.region !== "All Regions") params.region = filters.region;
-      if (filters.minPop > 0) params.min_pop = filters.minPop;
       const { data } = await axios.get("/api/aqi", { params });
       setAqiData(data);
-      if (data.length > 0) setLastUpdate(data[0].measured_at || null);
     } catch (e) { console.error("AQI fetch failed", e); }
     finally { setLoading(false); }
   };
 
-  useEffect(() => { fetchAQI(); }, [filters.region, filters.minPop]);
+  useEffect(() => { fetchAQI(); }, [filters.region]);
+
+  // Historical data fetch — triggered by timeWindow or region change
+  useEffect(() => {
+    if (timeWindow === "live") { setHistoricalData([]); return; }
+    const win = TIME_WINDOWS.find(w => w.id === timeWindow);
+    if (!win?.days) return;
+    setHistLoading(true);
+    const params = { days: win.days };
+    if (filters.region !== "All Regions") params.region = filters.region;
+    axios.get("/api/snapshot", { params })
+      .then(({ data: d }) => setHistoricalData(Array.isArray(d) ? d : []))
+      .catch((e) => { console.error("Historical fetch failed", e); setHistoricalData([]); })
+      .finally(() => setHistLoading(false));
+  }, [timeWindow, filters.region]);
+
+  // Displayed data — historical averages override live when active
+  const displayData = (timeWindow !== "live" && historicalData.length > 0)
+    ? historicalData
+    : aqiData;
 
   const markThemeSyncing = (ms = 1100) => {
     setThemeSyncing(true);
     window.setTimeout(() => setThemeSyncing(false), ms);
   };
 
-  useEffect(() => {
-    markThemeSyncing(900);
-  }, [theme.meta.id]);
+  useEffect(() => { markThemeSyncing(900); }, [theme.meta.id]);
 
   const handleOceanChange = (next) => {
     markThemeSyncing(1200);
@@ -773,12 +945,9 @@ export default function App() {
     const visible = kpiState.filter((k) => k.visible);
     const W = window.innerWidth, H = window.innerHeight;
     const PAD = 12, CW = 210, CH = 190, GAP = 8;
-
     const newPositions = visible.map((k, idx) => {
       let x, y;
-
       if (edge === "top" || edge === "bottom") {
-        // Horizontal layout — wrap to next row if cards would run off right edge
         const perRow = Math.max(1, Math.floor((W - PAD * 2 + GAP) / (CW + GAP)));
         const row = Math.floor(idx / perRow);
         const col = idx % perRow;
@@ -787,7 +956,6 @@ export default function App() {
           ? TAB_H + PAD + row * (CH + GAP)
           : H - PAD - CH - row * (CH + GAP);
       } else {
-        // Vertical layout — wrap to next column if cards would run off bottom
         const perCol = Math.max(1, Math.floor((H - TAB_H - PAD * 2 + GAP) / (CH + GAP)));
         const col = Math.floor(idx / perCol);
         const row = idx % perCol;
@@ -796,40 +964,14 @@ export default function App() {
           ? PAD + col * (CW + GAP)
           : W - PAD - CW - col * (CW + GAP);
       }
-
-      // Hard clamp — card must always be reachable
       x = Math.max(0, Math.min(x, W - CW));
       y = Math.max(TAB_H, Math.min(y, H - CH));
-
       return { id: k.id, x, y };
     });
-
     setKpiState((prev) => prev.map((k) => {
       const np = newPositions.find((p) => p.id === k.id);
       return np ? { ...k, x: np.x, y: np.y } : k;
     }));
-  };
-
-  const handleSaveTemplate = () => {
-    const name = prompt("Save layout as:");
-    if (!name) return;
-    const templates = JSON.parse(localStorage.getItem(TEMPLATE_KEY) || "{}");
-    templates[name] = { themeId: theme.meta.id, colormap, oceanPreset, kpiState };
-    localStorage.setItem(TEMPLATE_KEY, JSON.stringify(templates));
-    alert(`Saved as "${name}"`);
-  };
-
-  const handleLoadTemplate = () => {
-    const templates = JSON.parse(localStorage.getItem(TEMPLATE_KEY) || "{}");
-    const keys = Object.keys(templates);
-    if (!keys.length) { alert("No saved layouts yet."); return; }
-    const name = prompt(`Load layout:\n${keys.join(", ")}`);
-    if (!name || !templates[name]) return;
-    const t = templates[name];
-    if (t.themeId && switchTheme) switchTheme(t.themeId);   // directly apply theme
-    if (t.colormap) setColormap(t.colormap);
-    if (t.oceanPreset) handleOceanChange(t.oceanPreset);
-    if (t.kpiState) setKpiState(t.kpiState);
   };
 
   const ICON_BTN = ({ onClick, title, active, children }) => (
@@ -846,6 +988,8 @@ export default function App() {
     onMouseLeave={(e)=>{e.currentTarget.style.color=active?c.accent:c.textMuted;}}
     >{children}</button>
   );
+
+  const isDataLoading = loading || histLoading;
 
   return (
     <div style={{ display:"flex", flexDirection:"column", height:"100vh",
@@ -877,11 +1021,19 @@ export default function App() {
           );
         })}
         <div style={{ marginLeft:"auto", display:"flex", alignItems:"center" }}>
+          {timeWindow !== "live" && (
+            <div style={{ fontFamily:mono, fontSize:9, color:c.accent,
+              letterSpacing:"0.08em", padding:"0 10px", height:"100%",
+              background:`${c.accent}18`, borderLeft:`1px solid ${c.border}`,
+              display:"flex", alignItems:"center" }}>
+              ↩ {TIME_WINDOWS.find(t=>t.id===timeWindow)?.label}
+            </div>
+          )}
           <div style={{ fontFamily:mono, fontSize:10, color:c.textSubtle,
-            letterSpacing:"0.1em", padding:"0 14px" }}>
-            {loading
-              ? <span style={{color:c.warning}}>● Loading</span>
-              : <span>{aqiData.length} cities</span>}
+            letterSpacing:"0.1em", padding:"0 14px", borderLeft:`1px solid ${c.border}` }}>
+            {isDataLoading
+              ? <span style={{color:c.warning}}>● {histLoading?"Historical…":"Loading"}</span>
+              : <span>{displayData.length} cities</span>}
           </div>
           <div style={{ width:1, height:22, background:c.border }}/>
           <ICON_BTN onClick={()=>setSettingsOpen(v=>!v)} title="Settings" active={settingsOpen}>
@@ -894,20 +1046,33 @@ export default function App() {
       <div style={{ flex:1, position:"relative", overflow:"hidden" }}
         onClick={()=>{ if(filtersOpen)setFiltersOpen(false); }}>
         {activeTab==="aqi" && (
-          <AirQuality data={aqiData} loading={loading} filters={filters}
+          <AirQuality
+            data={displayData} loading={isDataLoading} filters={filters}
             metricMeta={METRIC_META} theme={theme}
             viewMode={viewMode} choropleth={choropleth} colormap={colormap}
-            oceanPreset={oceanPreset} oceanRefreshKey={oceanRefreshKey}/>
+            oceanPreset={oceanPreset} oceanRefreshKey={oceanRefreshKey}
+            borderLevel={borderLevel} showCities={showCities} satellite={satellite}
+            chartType={chartType} onChartType={setChartType}
+          />
         )}
-        {activeTab==="uv"     && <UVIndex data={aqiData} loading={loading} theme={theme}/>}
+        {activeTab==="uv"     && <UVIndex data={displayData} loading={isDataLoading} theme={theme}/>}
         {activeTab==="carbon" && <CarbonCalculator theme={theme}/>}
-        {activeTab==="chat"   && <QueryChat data={aqiData} theme={theme}/>}
+        {activeTab==="chat"   && <QueryChat data={displayData} theme={theme}/>}
       </div>
 
-      <FilterPanel open={filtersOpen} filters={filters} onFilter={setFilters}
-        onRefresh={fetchAQI} loading={loading} cityCount={aqiData.length}
-        lastUpdate={lastUpdate} viewMode={viewMode} onViewMode={setViewMode}
-        choropleth={choropleth} onChoropleth={setChoropleth} theme={theme}/>
+      <SidePanel
+        open={filtersOpen}
+        filters={filters} onFilter={setFilters}
+        onRefresh={fetchAQI} loading={loading} histLoading={histLoading}
+        viewMode={viewMode} onViewMode={setViewMode}
+        choropleth={choropleth} onChoropleth={setChoropleth}
+        borderLevel={borderLevel} onBorderLevel={setBorderLevel}
+        showCities={showCities} onShowCities={setShowCities}
+        satellite={satellite} onSatellite={setSatellite}
+        timeWindow={timeWindow} onTimeWindow={setTimeWindow}
+        chartType={chartType} onChartType={setChartType}
+        theme={theme}
+      />
 
       <SettingsModal open={settingsOpen} onClose={()=>setSettingsOpen(false)}
         theme={theme}
@@ -930,7 +1095,7 @@ export default function App() {
           if (tmpl.kpiState)    setKpiState(tmpl.kpiState);
         }}/>
 
-      <KpiCardsLayer kpiState={kpiState} data={aqiData}
+      <KpiCardsLayer kpiState={kpiState} data={displayData}
         filters={filters} metricMeta={METRIC_META}
         theme={theme} onPositionSave={handlePositionSave}/>
     </div>
