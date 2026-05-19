@@ -2,9 +2,16 @@
 <html lang="en">
   <head>
     <meta charset="UTF-8" />
-    <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>frontend</title>
+    <title>6print</title>
+    <!-- Globe favicon using SVG data URI -->
+    <link rel="icon" type="image/svg+xml" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'%3E%3Ccircle cx='50' cy='50' r='45' fill='%231a1a2e' stroke='%2300d4aa' stroke-width='3'/%3E%3Cellipse cx='50' cy='50' rx='20' ry='45' fill='none' stroke='%2300d4aa' stroke-width='2'/%3E%3Cline x1='5' y1='50' x2='95' y2='50' stroke='%2300d4aa' stroke-width='2'/%3E%3Cellipse cx='50' cy='50' rx='45' ry='18' fill='none' stroke='%2300d4aa' stroke-width='2'/%3E%3C/svg%3E" />
+    <style>
+      /* Hide Mapbox wordmark logo (requires Mapbox paid plan to remove attribution entirely;
+         © text attribution is preserved per Mapbox TOS) */
+      .mapboxgl-ctrl-logo { display: none !important; }
+      .mapboxgl-ctrl-attrib-button { display: none !important; }
+    </style>
   </head>
   <body>
     <div id="root"></div>
