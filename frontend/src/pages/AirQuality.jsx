@@ -1005,6 +1005,36 @@ const UV_BANDS_MAP = [
 ];
 const uvColorFor = (v) => (UV_BANDS_MAP.find(b=>(v??0)>=b.min&&(v??0)<=b.max)??UV_BANDS_MAP[0]).color;
 
+// ── Carbon Monoxide helpers (shared map) ──────────────────────────────────────
+// CO values from Open-Meteo are in μg/m³. WHO 24hr guideline = 4000 μg/m³.
+const CO_BANDS_MAP = [
+  { min:0,     max:499,   color:"#22c55e", label:"Low",       note:"Clean / background air"     },
+  { min:500,   max:1499,  color:"#eab308", label:"Moderate",  note:"Typical urban level"         },
+  { min:1500,  max:3999,  color:"#f97316", label:"Elevated",  note:"Approaching WHO limit"       },
+  { min:4000,  max:9999,  color:"#ef4444", label:"High",      note:"Above WHO 24hr guideline"    },
+  { min:10000, max:Infinity,color:"#a855f7",label:"Very High", note:"Significantly polluted"     },
+];
+const coColorFor = (v) => (CO_BANDS_MAP.find(b=>(v??0)>=b.min&&(v??0)<=b.max)??CO_BANDS_MAP[0]).color;
+
+const buildCOGeoJSON = (data, colormap="aqi") => ({
+  type:"FeatureCollection",
+  features:(data||[]).filter(c=>c.carbon_monoxide!=null).map(city=>{
+    const co = city.carbon_monoxide;
+    const color = (!colormap||colormap==="aqi")
+      ? coColorFor(co)
+      : getMetricColor("carbon_monoxide", co, colormap);
+    return {
+      type:"Feature",
+      geometry:{ type:"Point", coordinates:[city.lon,city.lat] },
+      properties:{
+        id:city.location, color,
+        radius:Math.max(5,Math.min(20,5+(co/9000)*12)),
+        co, cityJson:JSON.stringify(city),
+      },
+    };
+  }),
+});
+
 const buildUVGeoJSON = (data, colormap = "aqi") => ({
   type: "FeatureCollection",
   features: (data||[]).map(city => {
@@ -1101,6 +1131,7 @@ export default function AirQuality({
   const [popup,        setPopup]        = useState(null);
   const [hover,        setHover]        = useState(null);
   const [uvHover,      setUvHover]      = useState(null);
+  const [coHover,      setCoHover]      = useState(null);
   const [countryHover, setCountryHover] = useState(null);
   const [trendCity,    setTrendCity]    = useState(null);
   const activeTabRef = useRef(activeTab);
@@ -1182,7 +1213,15 @@ export default function AirQuality({
       ["uv-dots","uv-glow"].forEach(id => {
         if (map.getLayer(id)) map.setLayoutProperty(id, "visibility", "visible");
       });
-      ["cities-dots","cities-glow"].forEach(id => {
+      ["cities-dots","cities-glow","co-dots","co-glow"].forEach(id => {
+        if (map.getLayer(id)) map.setLayoutProperty(id, "visibility", "none");
+      });
+    } else if (activeTabRef.current === "carbon") {
+      setCODots(map);
+      ["co-dots","co-glow"].forEach(id => {
+        if (map.getLayer(id)) map.setLayoutProperty(id, "visibility", "visible");
+      });
+      ["cities-dots","cities-glow","uv-dots","uv-glow"].forEach(id => {
         if (map.getLayer(id)) map.setLayoutProperty(id, "visibility", "none");
       });
     }
@@ -1193,7 +1232,8 @@ export default function AirQuality({
       try {
         setDots(map);
         updateCountries(map);
-        if (activeTabRef.current === "uv") setUVDots(map);
+        if (activeTabRef.current === "uv")     setUVDots(map);
+        if (activeTabRef.current === "carbon") setCODots(map);
       } catch (_) {}
     });
   };
@@ -1266,7 +1306,7 @@ export default function AirQuality({
       map.setPaintProperty("cities-hover", "circle-stroke-color", light ? "#333" : "#fff");
     }
 
-    // ── UV layers (shared map, shown when activeTab === "uv") ──
+    // ── UV layers ──
     if (!map.getSource("uv-cities"))
       map.addSource("uv-cities", { type:"geojson", data:{ type:"FeatureCollection", features:[] } });
     if (!map.getLayer("uv-glow"))
@@ -1276,6 +1316,21 @@ export default function AirQuality({
           "circle-opacity":0.12, "circle-blur":1 } });
     if (!map.getLayer("uv-dots"))
       map.addLayer({ id:"uv-dots", type:"circle", source:"uv-cities",
+        layout:{ visibility:"none" },
+        paint:{ "circle-radius":["get","radius"], "circle-color":["get","color"],
+          "circle-opacity":0.88, "circle-stroke-width":1.5,
+          "circle-stroke-color":["get","color"], "circle-stroke-opacity":0.4 } });
+
+    // ── CO (Carbon Monoxide) layers ──
+    if (!map.getSource("co-cities"))
+      map.addSource("co-cities", { type:"geojson", data:{ type:"FeatureCollection", features:[] } });
+    if (!map.getLayer("co-glow"))
+      map.addLayer({ id:"co-glow", type:"circle", source:"co-cities",
+        layout:{ visibility:"none" },
+        paint:{ "circle-radius":["*",["get","radius"],2.2], "circle-color":["get","color"],
+          "circle-opacity":0.12, "circle-blur":1 } });
+    if (!map.getLayer("co-dots"))
+      map.addLayer({ id:"co-dots", type:"circle", source:"co-cities",
         layout:{ visibility:"none" },
         paint:{ "circle-radius":["get","radius"], "circle-color":["get","color"],
           "circle-opacity":0.88, "circle-stroke-width":1.5,
@@ -1365,7 +1420,7 @@ export default function AirQuality({
       map.getCanvas().style.cursor = "";
     });
 
-    // UV dot hover events (active when activeTab === "uv")
+    // UV dot hover events
     map.on("mouseenter", "uv-dots", (e) => {
       if (activeTabRef.current !== "uv") return;
       map.getCanvas().style.cursor = "pointer";
@@ -1377,8 +1432,24 @@ export default function AirQuality({
       map.getCanvas().style.cursor = "";
       setUvHover(null);
     });
+
+    // CO dot hover events
+    map.on("mouseenter", "co-dots", (e) => {
+      if (activeTabRef.current !== "carbon") return;
+      map.getCanvas().style.cursor = "pointer";
+      const city = JSON.parse(e.features[0].properties.cityJson);
+      const pt = map.project([city.lon, city.lat]);
+      setCoHover({ city, x:pt.x, y:pt.y });
+    });
+    map.on("mouseleave", "co-dots", () => {
+      map.getCanvas().style.cursor = "";
+      setCoHover(null);
+    });
+
     map.on("move", () => {
+      setHover(p => { if(!p) return null; const pt=map.project([p.city.lon,p.city.lat]); return{...p,x:pt.x,y:pt.y}; });
       setUvHover(p => { if(!p) return null; const pt=map.project([p.city.lon,p.city.lat]); return{...p,x:pt.x,y:pt.y}; });
+      setCoHover(p => { if(!p) return null; const pt=map.project([p.city.lon,p.city.lat]); return{...p,x:pt.x,y:pt.y}; });
     });
   };
 
@@ -1507,7 +1578,8 @@ export default function AirQuality({
     const update = () => {
       setDots(map);
       updateCountries(map);
-      if (activeTabRef.current === "uv") setUVDots(map);
+      if (activeTabRef.current === "uv")     setUVDots(map);
+      if (activeTabRef.current === "carbon") setCODots(map);
     };
     if (map.isStyleLoaded()) update();
     else map.once("style.load", update);
@@ -1588,20 +1660,34 @@ export default function AirQuality({
     map.getSource("uv-cities")?.setData(buildUVGeoJSON(dataRef.current, colormapRef.current));
   };
 
-  // ── Tab switch — toggle AQI vs UV dot layers ───────────────────────────────
+  const setCODots = (map) => {
+    map.getSource("co-cities")?.setData(buildCOGeoJSON(dataRef.current, colormapRef.current));
+  };
+
+  // ── Tab switch — toggle correct dot layer per tab ──────────────────────────
   useEffect(() => {
     const map = mapInst.current;
     if (!map || !map.isStyleLoaded()) return;
-    const isUV = activeTab === "uv";
-    const aqiVis = isUV ? "none" : (showCitiesRef.current ? "visible" : "none");
-    const uvVis  = isUV ? "visible" : "none";
+    const isUV     = activeTab === "uv";
+    const isCarbon = activeTab === "carbon";
+    const isAQI    = activeTab === "aqi";
+
+    const aqiVis = isAQI ? (showCitiesRef.current ? "visible" : "none") : "none";
+    const uvVis  = isUV  ? "visible" : "none";
+    const coVis  = isCarbon ? "visible" : "none";
+
     ["cities-dots","cities-glow"].forEach(id => {
       if (map.getLayer(id)) map.setLayoutProperty(id, "visibility", aqiVis);
     });
     ["uv-dots","uv-glow"].forEach(id => {
       if (map.getLayer(id)) map.setLayoutProperty(id, "visibility", uvVis);
     });
-    if (isUV) setUVDots(map);
+    ["co-dots","co-glow"].forEach(id => {
+      if (map.getLayer(id)) map.setLayoutProperty(id, "visibility", coVis);
+    });
+
+    if (isUV)     setUVDots(map);
+    if (isCarbon) setCODots(map);
   }, [activeTab]);
   useEffect(() => {
     if (downloadRef) {
@@ -1694,7 +1780,73 @@ export default function AirQuality({
         );
       })()}
 
-      {/* UV legend — shown on shared map when UV tab is active */}
+      {/* CO hover tooltip — shown when Carbon tab is active */}
+      {activeTab === "carbon" && coHover && (() => {
+        const { city, x, y } = coHover;
+        const co   = city.carbon_monoxide ?? 0;
+        const band = CO_BANDS_MAP.find(b=>co>=b.min&&co<=b.max) ?? CO_BANDS_MAP[0];
+        const left = x + 260 > cSize.w ? Math.max(4, x - 260) : x + 14;
+        let   top  = y - 80; if (top < 44) top = y + 14;
+        return (
+          <div style={{
+            position:"absolute", left, top, zIndex:30, pointerEvents:"none",
+            background:`${c.panel}f5`, border:`1px solid ${c.border}`,
+            borderTop:`2px solid ${band.color}`,
+            borderRadius:theme.shape.cardRadius, padding:"10px 13px", width:256,
+            backdropFilter:"blur(12px)", boxShadow:"0 4px 24px rgba(0,0,0,0.4)", fontFamily:mono,
+          }}>
+            <div style={{ display:"flex", alignItems:"baseline", gap:7, marginBottom:6 }}>
+              <span style={{ fontSize:13, fontWeight:700, color:c.text }}>{city.location}</span>
+              <span style={{ fontSize:10, color:c.textSubtle }}>{getCountryName(city.country)}</span>
+            </div>
+            <div style={{ display:"inline-flex", alignItems:"center", gap:7, marginBottom:6,
+              background:`${band.color}22`, border:`1px solid ${band.color}55`,
+              borderRadius:4, padding:"4px 9px" }}>
+              <div style={{ width:8, height:8, borderRadius:"50%", background:band.color }}/>
+              <span style={{ fontSize:12, fontWeight:700, color:band.color }}>
+                CO {co?.toFixed(0)} μg/m³
+              </span>
+              <span style={{ fontSize:9, color:band.color, opacity:0.85 }}>· {band.label}</span>
+            </div>
+            <div style={{ fontSize:10, color:c.textMuted, lineHeight:1.6 }}>{band.note}</div>
+            <div style={{ fontSize:9, color:c.textSubtle, marginTop:4 }}>
+              WHO 24hr limit: 4,000 μg/m³
+            </div>
+          </div>
+        );
+      })()}
+
+      {/* CO legend — shown on shared map when Carbon tab is active */}
+      {activeTab === "carbon" && viewMode === "map" && (
+        <div style={{ position:"absolute", bottom:52, left:12, zIndex:10, pointerEvents:"none",
+          background:`${c.panel}ee`, border:`1px solid ${c.border}`,
+          borderRadius:6, padding:"10px 12px", backdropFilter:"blur(8px)" }}>
+          <div style={{ fontFamily:mono, fontSize:9, letterSpacing:"0.18em",
+            color:c.textSubtle, textTransform:"uppercase", marginBottom:7 }}>
+            Carbon Monoxide
+          </div>
+          {CO_BANDS_MAP.slice(0,-1).map(b => {
+            const dotColor = (!colormap||colormap==="aqi")
+              ? b.color
+              : getMetricColor("carbon_monoxide", (b.min+b.max)/2, colormap);
+            return (
+              <div key={b.label} style={{ display:"flex", alignItems:"center", gap:7, marginBottom:4 }}>
+                <div style={{ width:8, height:8, borderRadius:"50%", background:dotColor, flexShrink:0 }}/>
+                <span style={{ fontFamily:mono, fontSize:10, color:c.textMuted }}>
+                  {b.label}
+                </span>
+                <span style={{ fontFamily:mono, fontSize:9, color:c.textSubtle, marginLeft:"auto" }}>
+                  {b.min === 0 ? `<${b.max}` : `${b.min.toLocaleString()}+`} μg/m³
+                </span>
+              </div>
+            );
+          })}
+          <div style={{ fontFamily:mono, fontSize:8, color:c.textSubtle, marginTop:4,
+            borderTop:`1px solid ${c.border}`, paddingTop:4 }}>
+            WHO 24hr limit: 4,000 μg/m³
+          </div>
+        </div>
+      )}
       {activeTab === "uv" && viewMode === "map" && (
         <div style={{ position:"absolute", bottom:52, left:12, zIndex:10, pointerEvents:"none",
           background:`${c.panel}ee`, border:`1px solid ${c.border}`,

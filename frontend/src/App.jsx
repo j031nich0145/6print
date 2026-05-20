@@ -1047,8 +1047,8 @@ export default function App() {
             Hidden via visibility (not display:none) on non-map tabs so the context survives. */}
         <div style={{
           position:"absolute", inset:0, zIndex:0,
-          visibility:(activeTab==="aqi"||activeTab==="uv")?"visible":"hidden",
-          pointerEvents:(activeTab==="aqi"||activeTab==="uv")?"auto":"none",
+          visibility:(activeTab==="aqi"||activeTab==="uv"||activeTab==="carbon")?"visible":"hidden",
+          pointerEvents:(activeTab==="aqi"||activeTab==="uv"||activeTab==="carbon")?"auto":"none",
         }}>
           <AirQuality
             data={displayData} loading={isDataLoading} filters={filters}
@@ -1062,17 +1062,17 @@ export default function App() {
           />
         </div>
 
-        {/* UV overlay — renders over the shared map, no own Mapbox instance.
-            pointerEvents:none lets map interactions pass through in map mode. */}
+        {/* UV overlay — no map, renders over shared map */}
         {activeTab==="uv" && (
           <div style={{ position:"absolute", inset:0, zIndex:2, pointerEvents:"none" }}>
             <UVIndex data={displayData} loading={isDataLoading} theme={theme}/>
           </div>
         )}
 
+        {/* Carbon overlay — no map, renders over shared map (shows CO dots) */}
         {activeTab==="carbon" && (
-          <div style={{ position:"absolute", inset:0, zIndex:2, background:c.bg }}>
-            <CarbonCalculator theme={theme}/>
+          <div style={{ position:"absolute", inset:0, zIndex:2, pointerEvents:"none" }}>
+            <CarbonCalculator data={displayData} theme={theme}/>
           </div>
         )}
         {activeTab==="chat" && (
