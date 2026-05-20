@@ -995,6 +995,37 @@ const TIME_WINDOW_LABELS = {
   "6m":"6 Months","1y":"1 Year","2y":"2 Years","3y":"3+ Years",
 };
 
+// ── UV index helpers (shared map) ────────────────────────────────────────────
+const UV_BANDS_MAP = [
+  { min:0,  max:2,  color:"#22c55e", label:"Low"       },
+  { min:3,  max:5,  color:"#eab308", label:"Moderate"  },
+  { min:6,  max:7,  color:"#f97316", label:"High"      },
+  { min:8,  max:10, color:"#ef4444", label:"Very High" },
+  { min:11, max:99, color:"#a855f7", label:"Extreme"   },
+];
+const uvColorFor = (v) => (UV_BANDS_MAP.find(b=>(v??0)>=b.min&&(v??0)<=b.max)??UV_BANDS_MAP[0]).color;
+
+const buildUVGeoJSON = (data, colormap = "aqi") => ({
+  type: "FeatureCollection",
+  features: (data||[]).map(city => {
+    const uv = city.uv_index ?? 0;
+    // Default "aqi" colormap → use standard WHO UV band colors.
+    // Any other colormap → apply it via getMetricColor so Settings changes are visible.
+    const color = (!colormap || colormap === "aqi")
+      ? uvColorFor(uv)
+      : getMetricColor("uv_index", uv, colormap);
+    return {
+      type:"Feature",
+      geometry:{ type:"Point", coordinates:[city.lon, city.lat] },
+      properties:{
+        id:city.location, color,
+        radius:Math.max(5, Math.min(22, 5 + uv * 1.3)),
+        uv, cityJson:JSON.stringify(city),
+      },
+    };
+  }),
+});
+
 // ISO 3166-1 alpha-2 → full English country name (browser-native, no lookup table needed)
 let _countryFmt = null;
 const getCountryName = (code) => {
@@ -1028,6 +1059,7 @@ export default function AirQuality({
   showCities = true, satellite = false,
   chartType = "bar", onChartType,
   timeWindow = "live",
+  activeTab = "aqi",
   downloadRef,
 }) {
   const c       = theme.colors;
@@ -1068,8 +1100,11 @@ export default function AirQuality({
   const [cSize,        setCSize]        = useState({ w: 1200, h: 700 });
   const [popup,        setPopup]        = useState(null);
   const [hover,        setHover]        = useState(null);
+  const [uvHover,      setUvHover]      = useState(null);
   const [countryHover, setCountryHover] = useState(null);
   const [trendCity,    setTrendCity]    = useState(null);
+  const activeTabRef = useRef(activeTab);
+  activeTabRef.current = activeTab;
 
   // Track container size
   const containerRef = useRef(null);
@@ -1141,11 +1176,25 @@ export default function AirQuality({
     });
     setDots(map);
     updateCountries(map);
+    // Sync UV dots if UV tab is active
+    if (activeTabRef.current === "uv") {
+      setUVDots(map);
+      ["uv-dots","uv-glow"].forEach(id => {
+        if (map.getLayer(id)) map.setLayoutProperty(id, "visibility", "visible");
+      });
+      ["cities-dots","cities-glow"].forEach(id => {
+        if (map.getLayer(id)) map.setLayoutProperty(id, "visibility", "none");
+      });
+    }
     // Clear any stale hover highlight
     map.getSource("country-hover")?.setData({ type:"FeatureCollection", features:[] });
     // One idle pass to catch race-y style transitions
     map.once("idle", () => {
-      try { setDots(map); updateCountries(map); } catch (_) {}
+      try {
+        setDots(map);
+        updateCountries(map);
+        if (activeTabRef.current === "uv") setUVDots(map);
+      } catch (_) {}
     });
   };
 
@@ -1216,6 +1265,21 @@ export default function AirQuality({
     if (map.getLayer("cities-hover")) {
       map.setPaintProperty("cities-hover", "circle-stroke-color", light ? "#333" : "#fff");
     }
+
+    // ── UV layers (shared map, shown when activeTab === "uv") ──
+    if (!map.getSource("uv-cities"))
+      map.addSource("uv-cities", { type:"geojson", data:{ type:"FeatureCollection", features:[] } });
+    if (!map.getLayer("uv-glow"))
+      map.addLayer({ id:"uv-glow", type:"circle", source:"uv-cities",
+        layout:{ visibility:"none" },
+        paint:{ "circle-radius":["*",["get","radius"],2.2], "circle-color":["get","color"],
+          "circle-opacity":0.12, "circle-blur":1 } });
+    if (!map.getLayer("uv-dots"))
+      map.addLayer({ id:"uv-dots", type:"circle", source:"uv-cities",
+        layout:{ visibility:"none" },
+        paint:{ "circle-radius":["get","radius"], "circle-color":["get","color"],
+          "circle-opacity":0.88, "circle-stroke-width":1.5,
+          "circle-stroke-color":["get","color"], "circle-stroke-opacity":0.4 } });
 
     if (eventsBoundRef.current) return;
     eventsBoundRef.current = true;
@@ -1299,6 +1363,22 @@ export default function AirQuality({
       setCountryHover(null);
       map.getSource("country-hover")?.setData({ type:"FeatureCollection", features:[] });
       map.getCanvas().style.cursor = "";
+    });
+
+    // UV dot hover events (active when activeTab === "uv")
+    map.on("mouseenter", "uv-dots", (e) => {
+      if (activeTabRef.current !== "uv") return;
+      map.getCanvas().style.cursor = "pointer";
+      const city = JSON.parse(e.features[0].properties.cityJson);
+      const pt = map.project([city.lon, city.lat]);
+      setUvHover({ city, x:pt.x, y:pt.y });
+    });
+    map.on("mouseleave", "uv-dots", () => {
+      map.getCanvas().style.cursor = "";
+      setUvHover(null);
+    });
+    map.on("move", () => {
+      setUvHover(p => { if(!p) return null; const pt=map.project([p.city.lon,p.city.lat]); return{...p,x:pt.x,y:pt.y}; });
     });
   };
 
@@ -1424,7 +1504,11 @@ export default function AirQuality({
     colormapRef.current = colormap;
     const map = mapInst.current;
     if (!map) return;
-    const update = () => { setDots(map); updateCountries(map); };
+    const update = () => {
+      setDots(map);
+      updateCountries(map);
+      if (activeTabRef.current === "uv") setUVDots(map);
+    };
     if (map.isStyleLoaded()) update();
     else map.once("style.load", update);
   }, [data, filters.metric, choropleth, colormap]);
@@ -1500,7 +1584,25 @@ export default function AirQuality({
     }
   }, [viewMode]);
 
-  // ── Register download functions with parent ────────────────────────────────
+  const setUVDots = (map) => {
+    map.getSource("uv-cities")?.setData(buildUVGeoJSON(dataRef.current, colormapRef.current));
+  };
+
+  // ── Tab switch — toggle AQI vs UV dot layers ───────────────────────────────
+  useEffect(() => {
+    const map = mapInst.current;
+    if (!map || !map.isStyleLoaded()) return;
+    const isUV = activeTab === "uv";
+    const aqiVis = isUV ? "none" : (showCitiesRef.current ? "visible" : "none");
+    const uvVis  = isUV ? "visible" : "none";
+    ["cities-dots","cities-glow"].forEach(id => {
+      if (map.getLayer(id)) map.setLayoutProperty(id, "visibility", aqiVis);
+    });
+    ["uv-dots","uv-glow"].forEach(id => {
+      if (map.getLayer(id)) map.setLayoutProperty(id, "visibility", uvVis);
+    });
+    if (isUV) setUVDots(map);
+  }, [activeTab]);
   useEffect(() => {
     if (downloadRef) {
       downloadRef.current = { csv: downloadCSV, png: downloadPNG };
@@ -1538,7 +1640,7 @@ export default function AirQuality({
         </div>
       )}
 
-      {viewMode === "map" && (
+      {viewMode === "map" && activeTab === "aqi" && (
         <>
           {hover && !popup && (
             <HoverTooltip info={hover} W={cSize.w} H={cSize.h} theme={theme}
@@ -1559,6 +1661,61 @@ export default function AirQuality({
               onClose={() => setTrendCity(null)} theme={theme} />
           )}
         </>
+      )}
+
+      {/* UV hover tooltip — shown on the shared map when UV tab is active */}
+      {activeTab === "uv" && uvHover && (() => {
+        const { city, x, y } = uvHover;
+        const uv   = city.uv_index ?? 0;
+        const band = UV_BANDS_MAP.find(b=>uv>=b.min&&uv<=b.max) ?? UV_BANDS_MAP[0];
+        const left = x + 260 > cSize.w ? Math.max(4, x - 260) : x + 14;
+        let   top  = y - 80; if (top < 44) top = y + 14;
+        return (
+          <div style={{
+            position:"absolute", left, top, zIndex:30, pointerEvents:"none",
+            background:`${c.panel}f5`, border:`1px solid ${c.border}`,
+            borderTop:`2px solid ${band.color}`,
+            borderRadius:theme.shape.cardRadius, padding:"10px 13px", width:244,
+            backdropFilter:"blur(12px)", boxShadow:"0 4px 24px rgba(0,0,0,0.4)", fontFamily:mono,
+          }}>
+            <div style={{ display:"flex", alignItems:"baseline", gap:7, marginBottom:6 }}>
+              <span style={{ fontSize:13, fontWeight:700, color:c.text }}>{city.location}</span>
+              <span style={{ fontSize:10, color:c.textSubtle }}>{getCountryName(city.country)}</span>
+            </div>
+            <div style={{ display:"inline-flex", alignItems:"center", gap:7, marginBottom:6,
+              background:`${band.color}22`, border:`1px solid ${band.color}55`,
+              borderRadius:4, padding:"4px 9px" }}>
+              <div style={{ width:8, height:8, borderRadius:"50%", background:band.color }}/>
+              <span style={{ fontSize:12, fontWeight:700, color:band.color }}>UV {uv?.toFixed(1)}</span>
+              <span style={{ fontSize:9, color:band.color, opacity:0.85 }}>· {band.label}</span>
+            </div>
+            <div style={{ fontSize:9, color:c.textSubtle }}>Click to open UV calculator</div>
+          </div>
+        );
+      })()}
+
+      {/* UV legend — shown on shared map when UV tab is active */}
+      {activeTab === "uv" && viewMode === "map" && (
+        <div style={{ position:"absolute", bottom:52, left:12, zIndex:10, pointerEvents:"none",
+          background:`${c.panel}ee`, border:`1px solid ${c.border}`,
+          borderRadius:6, padding:"10px 12px", backdropFilter:"blur(8px)" }}>
+          <div style={{ fontFamily:mono, fontSize:9, letterSpacing:"0.18em",
+            color:c.textSubtle, textTransform:"uppercase", marginBottom:7 }}>UV Index</div>
+          {UV_BANDS_MAP.map(b => {
+            // Use colormap-aware color — same logic as the dot layer
+            const dotColor = (!colormap || colormap === "aqi")
+              ? b.color
+              : getMetricColor("uv_index", (b.min + Math.min(b.max, 11)) / 2, colormap);
+            return (
+              <div key={b.label} style={{ display:"flex", alignItems:"center", gap:7, marginBottom:4 }}>
+                <div style={{ width:8, height:8, borderRadius:"50%", background:dotColor, flexShrink:0 }}/>
+                <span style={{ fontFamily:mono, fontSize:10, color:c.textMuted }}>
+                  {b.label} ({b.min}–{b.max===99?"11+":b.max})
+                </span>
+              </div>
+            );
+          })}
+        </div>
       )}
     </div>
   );

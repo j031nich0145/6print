@@ -745,7 +745,7 @@ function SidePanel({
 }
 
 // ── KPI cards layer ───────────────────────────────────────────────────────────
-function KpiCardsLayer({ kpiState, data, filters, metricMeta, theme, onPositionSave }) {
+function KpiCardsLayer({ kpiState, data, filters, metricMeta, theme, onPositionSave, colormap }) {
   const edgeCounts = {};
 
   const getPos = (id) => {
@@ -770,31 +770,32 @@ function KpiCardsLayer({ kpiState, data, filters, metricMeta, theme, onPositionS
       {isOn("top5worst") && (
         <DraggableCard id="top5worst" {...getPos("top5worst")}
           onPositionSave={onPositionSave} theme={theme} title="5 Worst AQI">
-          <KpiTop5 data={data} mode="worst" theme={theme}/>
+          <KpiTop5 data={data} mode="worst" theme={theme} colormap={colormap}/>
         </DraggableCard>
       )}
       {isOn("top5best") && (
         <DraggableCard id="top5best" {...getPos("top5best")}
           onPositionSave={onPositionSave} theme={theme} title="5 Best AQI">
-          <KpiTop5 data={data} mode="best" theme={theme}/>
+          <KpiTop5 data={data} mode="best" theme={theme} colormap={colormap}/>
         </DraggableCard>
       )}
       {isOn("global_avg") && (
         <DraggableCard id="global_avg" {...getPos("global_avg")}
           onPositionSave={onPositionSave} theme={theme} title="Global Average">
-          <KpiGlobalAvg data={data} metric={filters.metric} metricMeta={metricMeta} theme={theme}/>
+          <KpiGlobalAvg data={data} metric={filters.metric} metricMeta={metricMeta}
+            theme={theme} colormap={colormap}/>
         </DraggableCard>
       )}
       {isOn("aqi_legend") && (
         <DraggableCard id="aqi_legend" {...getPos("aqi_legend")}
           onPositionSave={onPositionSave} theme={theme} title="AQI Legend">
-          <KpiLegend theme={theme}/>
+          <KpiLegend theme={theme} colormap={colormap}/>
         </DraggableCard>
       )}
       {isOn("region_summary") && (
         <DraggableCard id="region_summary" {...getPos("region_summary")}
           onPositionSave={onPositionSave} theme={theme} title="Region Summary">
-          <KpiRegionSummary data={data} theme={theme}/>
+          <KpiRegionSummary data={data} theme={theme} colormap={colormap}/>
         </DraggableCard>
       )}
     </>
@@ -1041,7 +1042,14 @@ export default function App() {
       {/* Content */}
       <div style={{ flex:1, position:"relative", overflow:"hidden" }}
         onClick={()=>{ if(filtersOpen)setFiltersOpen(false); }}>
-        {activeTab==="aqi" && (
+
+        {/* AirQuality — always mounted so Mapbox WebGL context is never destroyed.
+            Hidden via visibility (not display:none) on non-map tabs so the context survives. */}
+        <div style={{
+          position:"absolute", inset:0, zIndex:0,
+          visibility:(activeTab==="aqi"||activeTab==="uv")?"visible":"hidden",
+          pointerEvents:(activeTab==="aqi"||activeTab==="uv")?"auto":"none",
+        }}>
           <AirQuality
             data={displayData} loading={isDataLoading} filters={filters}
             metricMeta={METRIC_META} theme={theme}
@@ -1049,13 +1057,29 @@ export default function App() {
             oceanPreset={oceanPreset} oceanRefreshKey={oceanRefreshKey}
             showCities={showCities} satellite={satellite}
             chartType={chartType} onChartType={setChartType}
-            timeWindow={timeWindow}
+            timeWindow={timeWindow} activeTab={activeTab}
             downloadRef={downloadRef}
           />
+        </div>
+
+        {/* UV overlay — renders over the shared map, no own Mapbox instance.
+            pointerEvents:none lets map interactions pass through in map mode. */}
+        {activeTab==="uv" && (
+          <div style={{ position:"absolute", inset:0, zIndex:2, pointerEvents:"none" }}>
+            <UVIndex data={displayData} loading={isDataLoading} theme={theme}/>
+          </div>
         )}
-        {activeTab==="uv"     && <UVIndex data={displayData} loading={isDataLoading} theme={theme}/>}
-        {activeTab==="carbon" && <CarbonCalculator theme={theme}/>}
-        {activeTab==="chat"   && <QueryChat data={displayData} theme={theme}/>}
+
+        {activeTab==="carbon" && (
+          <div style={{ position:"absolute", inset:0, zIndex:2, background:c.bg }}>
+            <CarbonCalculator theme={theme}/>
+          </div>
+        )}
+        {activeTab==="chat" && (
+          <div style={{ position:"absolute", inset:0, zIndex:2, background:c.bg }}>
+            <QueryChat data={displayData} theme={theme}/>
+          </div>
+        )}
       </div>
 
       <SidePanel
@@ -1092,9 +1116,12 @@ export default function App() {
           if (tmpl.kpiState)    setKpiState(tmpl.kpiState);
         }}/>
 
-      <KpiCardsLayer kpiState={kpiState} data={displayData}
-        filters={filters} metricMeta={METRIC_META}
-        theme={theme} onPositionSave={handlePositionSave}/>
+      {activeTab==="aqi" && (
+        <KpiCardsLayer kpiState={kpiState} data={displayData}
+          filters={filters} metricMeta={METRIC_META}
+          theme={theme} colormap={colormap}
+          onPositionSave={handlePositionSave}/>
+      )}
     </div>
   );
 }
