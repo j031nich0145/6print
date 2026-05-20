@@ -1075,11 +1075,16 @@ export default function App() {
             <CarbonCalculator data={displayData} theme={theme}/>
           </div>
         )}
-        {activeTab==="chat" && (
-          <div style={{ position:"absolute", inset:0, zIndex:2, background:c.bg }}>
-            <QueryChat data={displayData} theme={theme}/>
-          </div>
-        )}
+        {/* Chat — always mounted so conversation survives tab switches.
+            Hidden via visibility (not unmounted) so state is preserved in-session. */}
+        <div style={{
+          position:"absolute", inset:0, zIndex:2, background:c.bg,
+          visibility: activeTab==="chat" ? "visible" : "hidden",
+          pointerEvents: activeTab==="chat" ? "auto" : "none",
+        }}>
+          <QueryChat data={displayData} theme={theme}
+            filters={filters} timeWindow={timeWindow}/>
+        </div>
       </div>
 
       <SidePanel
