@@ -9,7 +9,7 @@ import CarbonCalculator from "./pages/CarbonCalculator";
 import QueryChat from "./pages/QueryChat";
 import { DraggableCard, KpiTop5, KpiLegend, KpiGlobalAvg, KpiRegionSummary } from "./components/KpiCards";
 import axios from "axios";
-
+axios.defaults.baseURL = import.meta.env.VITE_API_URL || "http://localhost:8000";
 // ── Constants ─────────────────────────────────────────────────────────────────
 const TABS = [
   { id:"aqi",    label:"Air Quality"       },
