@@ -8,7 +8,17 @@ import snowflake.connector, os, json
 
 load_dotenv()
 app = FastAPI()
-app.add_middleware(CORSMiddleware, allow_origins=["*"], allow_methods=["*"], allow_headers=["*"])
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=[
+        "https://6print.org",
+        "https://www.6print.org",
+        "https://6print.pages.dev",
+        "http://localhost:5173",
+    ],
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
 
 # ── Snowflake ─────────────────────────────────────────────────────────────────
 
