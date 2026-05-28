@@ -195,7 +195,7 @@ export default function QueryChat({ data, theme, filters, timeWindow }) {
 
     let reply = "";
     try {
-      const res = await fetch("/api/chat", {
+      const res = await fetch(`${import.meta.env.VITE_API_URL}/api/chat`, {
         method:  "POST",
         headers: { "Content-Type": "application/json" },
         signal:  controller.signal,
