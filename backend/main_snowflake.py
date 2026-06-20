@@ -4,11 +4,10 @@ from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 from typing import Optional, List
 from dotenv import load_dotenv
-import psycopg2, psycopg2.extras, os, json
+import snowflake.connector, os, json
 
 load_dotenv()
 app = FastAPI()
-
 app.add_middleware(
     CORSMiddleware,
     allow_origins=[
@@ -21,18 +20,21 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# ── PostgreSQL ────────────────────────────────────────────────────────────────
+# ── Snowflake ─────────────────────────────────────────────────────────────────
 
-def query_db(sql, params=()):
-    conn = psycopg2.connect(
-        host=os.getenv("POSTGRES_HOST", "localhost"),
-        dbname=os.getenv("POSTGRES_DB", "carbon_db"),
-        user=os.getenv("POSTGRES_USER"),
-        password=os.getenv("POSTGRES_PASSWORD"),
+def query_sf(sql, params=()):
+    conn = snowflake.connector.connect(
+        user=os.getenv("SNOWFLAKE_USER"),
+        password=os.getenv("SNOWFLAKE_PASSWORD"),
+        account=os.getenv("SNOWFLAKE_ACCOUNT"),
+        warehouse=os.getenv("SNOWFLAKE_WAREHOUSE"),
+        database=os.getenv("SNOWFLAKE_DATABASE"),
+        schema=os.getenv("SNOWFLAKE_SCHEMA"),
     )
-    cur = conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
+    cur = conn.cursor()
     cur.execute(sql, params)
-    rows = [dict(r) for r in cur.fetchall()]
+    cols = [d[0].lower() for d in cur.description]
+    rows = [dict(zip(cols, r)) for r in cur.fetchall()]
     cur.close(); conn.close()
     return rows
 
@@ -57,7 +59,7 @@ def get_aqi(region: Optional[str] = None, min_pop: int = 0):
     if region and region not in ("All Regions", ""):
         clauses.append("region = %s"); params.append(region)
     if min_pop > 0:
-        clauses.append("population >= %s"); params.append(min_pop)
+        clauses.append(f"population >= {int(min_pop)}")
     where = " AND ".join(clauses)
     sql = f"""
         SELECT location, country, region, province, lat, lon, population,
@@ -66,9 +68,10 @@ def get_aqi(region: Optional[str] = None, min_pop: int = 0):
                us_aqi, european_aqi, measured_at
         FROM clean_air_quality
         WHERE {where}
+        QUALIFY ROW_NUMBER() OVER (PARTITION BY location ORDER BY loaded_at DESC) = 1
         ORDER BY us_aqi DESC NULLS LAST
     """
-    return query_db(sql, tuple(params))
+    return query_sf(sql, tuple(params))
 
 # ── Historical snapshot (city averages over a period) ────────────────────────
 
@@ -82,35 +85,35 @@ def get_snapshot(
     clauses = ["1=1"]
     params = []
     if year:
-        clauses.append("EXTRACT(YEAR FROM date) = %s"); params.append(year)
+        clauses.append("YEAR(date) = %s"); params.append(year)
     elif days:
-        clauses.append("date >= CURRENT_DATE - %s * INTERVAL '1 day'"); params.append(days)
+        clauses.append(f"date >= DATEADD(day, -{int(days)}, CURRENT_DATE())")
     if region and region not in ("All Regions", ""):
         clauses.append("region = %s"); params.append(region)
     if min_pop > 0:
-        clauses.append("population >= %s"); params.append(min_pop)
+        clauses.append(f"population >= {int(min_pop)}")
     where = " AND ".join(clauses)
     sql = f"""
         SELECT
             location, country, region, province, lat, lon,
             MAX(population)               AS population,
-            ROUND(AVG(us_aqi)::numeric, 0)            AS us_aqi,
-            ROUND(AVG(european_aqi)::numeric, 0)      AS european_aqi,
-            ROUND(AVG(pm2_5)::numeric, 1)             AS pm2_5,
-            ROUND(AVG(pm10)::numeric, 1)              AS pm10,
-            ROUND(AVG(carbon_monoxide)::numeric, 1)   AS carbon_monoxide,
-            ROUND(AVG(nitrogen_dioxide)::numeric, 1)  AS nitrogen_dioxide,
-            ROUND(AVG(sulphur_dioxide)::numeric, 1)   AS sulphur_dioxide,
-            ROUND(AVG(ozone)::numeric, 1)             AS ozone,
-            ROUND(AVG(dust)::numeric, 1)              AS dust,
-            ROUND(AVG(uv_index)::numeric, 1)          AS uv_index,
+            ROUND(AVG(us_aqi))            AS us_aqi,
+            ROUND(AVG(european_aqi))      AS european_aqi,
+            ROUND(AVG(pm2_5),1)           AS pm2_5,
+            ROUND(AVG(pm10),1)            AS pm10,
+            ROUND(AVG(carbon_monoxide),1) AS carbon_monoxide,
+            ROUND(AVG(nitrogen_dioxide),1) AS nitrogen_dioxide,
+            ROUND(AVG(sulphur_dioxide),1)  AS sulphur_dioxide,
+            ROUND(AVG(ozone),1)           AS ozone,
+            ROUND(AVG(dust),1)            AS dust,
+            ROUND(AVG(uv_index),1)        AS uv_index,
             COUNT(DISTINCT date)          AS days_of_data
         FROM air_quality_combined
         WHERE {where}
         GROUP BY location, country, region, province, lat, lon
         ORDER BY us_aqi DESC NULLS LAST
     """
-    return query_db(sql, tuple(params))
+    return query_sf(sql, tuple(params))
 
 # ── City trend (time series for charts) ──────────────────────────────────────
 
@@ -126,9 +129,9 @@ def get_trend(
     clauses = ["location = %s"]
     params = [city]
     if year:
-        clauses.append("EXTRACT(YEAR FROM date) = %s"); params.append(year)
+        clauses.append("YEAR(date) = %s"); params.append(year)
     elif days:
-        clauses.append("date >= CURRENT_DATE - %s * INTERVAL '1 day'"); params.append(days)
+        clauses.append(f"date >= DATEADD(day, -{int(days)}, CURRENT_DATE())")
     where = " AND ".join(clauses)
     sql = f"""
         SELECT date, location, country, region,
@@ -137,7 +140,7 @@ def get_trend(
         WHERE {where}
         ORDER BY date ASC
     """
-    return query_db(sql, tuple(params))
+    return query_sf(sql, tuple(params))
 
 # ── Chat (streaming SSE) ──────────────────────────────────────────────────────
 
@@ -165,7 +168,7 @@ def _build_system_prompt(ctx: dict) -> str:
     co_line = f"\n- Highest CO: {top_co['location']} ({top_co['value']:.0f} μg/m³)" if top_co else ""
     uv_line = f"\n- Highest UV: {top_uv['location']} (UV {top_uv['value']:.1f})" if top_uv else ""
 
-    return f"""You are an expert air quality analyst for Carbon Monitor, a real-time global air quality analytics platform powered by Open-Meteo. Historical data spans 2023 to present; notable events include the 2023 Canadian wildfire season (June–Aug).
+    return f"""You are an expert air quality analyst for Carbon Monitor, a real-time global air quality analytics platform powered by Open-Meteo and CAMS (Copernicus Atmosphere Monitoring Service). Historical data spans 2023 to present; notable events include the 2023 Canadian wildfire season (June–Aug).
 
 ## Live Data Snapshot
 - Cities monitored: {city_count}
