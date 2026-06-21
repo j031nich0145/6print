@@ -27,7 +27,7 @@ jobs:
           push: true
           tags: ${{ secrets.DOCKERHUB_USERNAME }}/6print-backend:latest
 
-      - name: Deploy to Hetzner
+      - name: Deploy to server
         uses: appleboy/ssh-action@v1.0.3
         with:
           host: ${{ secrets.HETZNER_HOST }}
@@ -40,6 +40,7 @@ jobs:
             docker run -d \
               --name 6print-backend \
               --restart always \
+              --network 6print-net \
               --env-file /opt/6print/.env \
               -p 8000:8000 \
               j031nich0145/6print-backend:latest

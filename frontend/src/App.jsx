@@ -243,13 +243,20 @@ function SettingsModal({ open, onClose, theme,
             <div style={{ fontFamily:mono, fontSize:10, color:c.textMuted, lineHeight:1.9 }}>
               <div style={{ color:c.textSubtle, fontSize:9, letterSpacing:"0.14em",
                 textTransform:"uppercase", marginBottom:6 }}>Data Pipeline</div>
-              <div>Open-Meteo → AWS Lambda (Python 3.12)</div>
-              <div>→ S3 Data Lake → Snowflake Analytics</div>
+              <div>Open-Meteo → Cron job (10 min)</div>
+              <div>→ PostgreSQL (self-hosted)</div>
               <div>→ FastAPI → React</div>
               <div style={{ color:c.textSubtle, fontSize:9, letterSpacing:"0.14em",
                 textTransform:"uppercase", margin:"12px 0 6px" }}>Coverage</div>
-              <div>157 cities · 30 min refresh · 2023–present</div>
-              <div>Historical: 178,687 rows</div>
+              <div>1,389 cities · 10 min refresh</div>
+              <div style={{ color:c.textSubtle, fontSize:9, letterSpacing:"0.14em",
+                textTransform:"uppercase", margin:"12px 0 6px" }}>Architecture History</div>
+              <div style={{ opacity:0.85 }}>
+                Originally built on AWS (EventBridge → Lambda → S3 → Snowflake).
+                Migrated to self-hosted PostgreSQL on the same server for cost
+                efficiency at current scale — same reliability, zero third-party
+                data warehouse dependency.
+              </div>
               <div style={{ marginTop:10 }}>
                 <a href="https://github.com/j031nich0145/6print" target="_blank"
                   rel="noopener" style={{ color:c.accent }}>github.com/j031nich0145/6print</a>
