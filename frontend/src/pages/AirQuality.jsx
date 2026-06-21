@@ -31,10 +31,10 @@ const aqiBand = (v) => {
 };
 
 const dotRadius = (metric, v) => {
-  if (v == null) return 5;
+  if (v == null) return 4;
   if (metric === "us_aqi" || metric === "european_aqi")
-    return Math.max(4, Math.min(20, 4 + (v / 60) * 8));
-  return 6;
+    return Math.max(3, Math.min(13, 3 + (v / 60) * 5));
+  return 5;
 };
 
 // ── GeoJSON helpers ───────────────────────────────────────────────────────────
@@ -1028,7 +1028,7 @@ const buildCOGeoJSON = (data, colormap="aqi") => ({
       geometry:{ type:"Point", coordinates:[city.lon,city.lat] },
       properties:{
         id:city.location, color,
-        radius:Math.max(5,Math.min(20,5+(co/9000)*12)),
+        radius:Math.max(3,Math.min(13,3+(co/9000)*8)),
         co, cityJson:JSON.stringify(city),
       },
     };
@@ -1049,7 +1049,7 @@ const buildUVGeoJSON = (data, colormap = "aqi") => ({
       geometry:{ type:"Point", coordinates:[city.lon, city.lat] },
       properties:{
         id:city.location, color,
-        radius:Math.max(5, Math.min(22, 5 + uv * 1.3)),
+        radius:Math.max(3, Math.min(13, 3 + uv * 0.85)),
         uv, cityJson:JSON.stringify(city),
       },
     };
@@ -1286,7 +1286,7 @@ export default function AirQuality({
     // City circles
     if (!map.getLayer("cities-glow")) {
       map.addLayer({ id: "cities-glow", type: "circle", source: "cities",
-        paint: { "circle-radius": ["*", ["get", "radius"], 2], "circle-color": ["get", "color"],
+        paint: { "circle-radius": ["*", ["get", "radius"], 1.5], "circle-color": ["get", "color"],
           "circle-opacity": 0.15, "circle-blur": 1 } });
     }
     if (!map.getLayer("cities-dots")) {
@@ -1312,7 +1312,7 @@ export default function AirQuality({
     if (!map.getLayer("uv-glow"))
       map.addLayer({ id:"uv-glow", type:"circle", source:"uv-cities",
         layout:{ visibility:"none" },
-        paint:{ "circle-radius":["*",["get","radius"],2.2], "circle-color":["get","color"],
+        paint:{ "circle-radius":["*",["get","radius"],1.6], "circle-color":["get","color"],
           "circle-opacity":0.12, "circle-blur":1 } });
     if (!map.getLayer("uv-dots"))
       map.addLayer({ id:"uv-dots", type:"circle", source:"uv-cities",
@@ -1327,7 +1327,7 @@ export default function AirQuality({
     if (!map.getLayer("co-glow"))
       map.addLayer({ id:"co-glow", type:"circle", source:"co-cities",
         layout:{ visibility:"none" },
-        paint:{ "circle-radius":["*",["get","radius"],2.2], "circle-color":["get","color"],
+        paint:{ "circle-radius":["*",["get","radius"],1.6], "circle-color":["get","color"],
           "circle-opacity":0.12, "circle-blur":1 } });
     if (!map.getLayer("co-dots"))
       map.addLayer({ id:"co-dots", type:"circle", source:"co-cities",
@@ -1720,9 +1720,8 @@ export default function AirQuality({
           justifyContent: "center", flexDirection: "column", gap: 10,
           background: `${c.bg}cc`, backdropFilter: "blur(4px)", pointerEvents: "none" }}>
           <div style={{ fontFamily: mono, fontSize: 11, letterSpacing: "0.2em", color: c.textSubtle }}>
-            QUERYING SNOWFLAKE
+            LOADING DATA
           </div>
-          <div style={{ fontFamily: mono, fontSize: 10, color: c.textSubtle }}>157 cities</div>
         </div>
       )}
 
