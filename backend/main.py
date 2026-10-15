@@ -210,11 +210,11 @@ def chat(req: ChatRequest):
     def stream():
         try:
             completion = client.chat.completions.create(
-                model       = "llama-3.3-70b-versatile",
+                model       = "openai/gpt-oss-120b",
                 messages    = [{"role": "system", "content": system}]
                              + [{"role": m.role, "content": m.content} for m in req.messages],
                 temperature = 0.4,
-                max_tokens  = 1024,
+                max_tokens  = 2048,
                 stream      = True,
             )
             for chunk in completion:
